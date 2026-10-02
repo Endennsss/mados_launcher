@@ -2,9 +2,9 @@ name: Build, Test & Package
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, mados-main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, mados-main ]
 
 jobs:
   build:
@@ -45,7 +45,7 @@ jobs:
     - run: npm run build
 
   package-windows:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/mados-main')
     needs: [build, frontend]
     runs-on: windows-latest
     defaults:

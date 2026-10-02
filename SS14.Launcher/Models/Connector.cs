@@ -685,6 +685,19 @@ public partial class Connector : ObservableObject
 #pragma warning disable 162
     private static async Task<ProcessStartInfo> GetLoaderStartInfo()
     {
+        // Packaged Mados builds keep a self-contained Loader beside the worker.
+        // Prefer it before the source-tree fallback so a Release worker can
+        // actually start the game from an installed Electron application.
+        var bundledLoader = Path.Combine(
+            LauncherPaths.DirLauncherInstall,
+            "loader",
+            OperatingSystem.IsWindows() ? "SS14.Loader.exe" : "SS14.Loader");
+        if (File.Exists(bundledLoader))
+        {
+            Log.Debug("Using bundled Loader at {LoaderPath}", bundledLoader);
+            return new ProcessStartInfo { FileName = bundledLoader };
+        }
+
         string basePath;
 
 #if FULL_RELEASE

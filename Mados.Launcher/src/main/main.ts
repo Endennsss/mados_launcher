@@ -8,11 +8,32 @@ import { prepareDataMigration } from "./data-migration";
 import { WorkerClient } from "./worker-client";
 
 let windowRef: BrowserWindow | undefined;
+let shuttingDown = false;
+let shutdownComplete = false;
 const worker = new WorkerClient();
 const discordPresence = new DiscordPresenceService((status) => {
-  windowRef?.webContents.send("discord-status", { status });
+  sendToRenderer("discord-status", { status });
 });
 const pendingDeepLinks: string[] = [];
+
+function sendToRenderer(channel: string, payload: unknown): void {
+  const window = windowRef;
+  // Worker, Discord and updater callbacks can arrive after the native window
+  // closes. Check the window before even accessing its webContents getter.
+  if (shuttingDown || !window || window.isDestroyed()) return;
+  const contents = window.webContents;
+  if (contents.isDestroyed()) return;
+  try {
+    contents.send(channel, payload);
+  } catch (error) {
+    // A renderer can be destroyed between the checks above and send(). This
+    // is expected during close; never turn that race into an uncaught main
+    // process exception.
+    if (!(error instanceof Error && /destroyed/i.test(error.message))) {
+      console.error("[mados] renderer event delivery failed", error);
+    }
+  }
+}
 
 /**
  * CSS clips the renderer, but a transparent frameless BrowserWindow is still
@@ -73,12 +94,17 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  window.on("ready-to-show", () => window.show());
+  window.on("ready-to-show", () => {
+    if (!shuttingDown && !window.isDestroyed()) window.show();
+  });
+  window.on("closed", () => {
+    if (windowRef === window) windowRef = undefined;
+  });
   window.on("resize", () => applyRoundedWindowShape(window));
   window.on("maximize", () => applyRoundedWindowShape(window));
   window.on("unmaximize", () => applyRoundedWindowShape(window));
-  window.on("maximize", () => window.webContents.send("window-state", { maximized: true }));
-  window.on("unmaximize", () => window.webContents.send("window-state", { maximized: false }));
+  window.on("maximize", () => sendToRenderer("window-state", { maximized: true }));
+  window.on("unmaximize", () => sendToRenderer("window-state", { maximized: false }));
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
     return { action: "deny" };
@@ -103,14 +129,15 @@ function createWindow(): BrowserWindow {
 }
 
 function trustedSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean {
-  return Boolean(windowRef && event.sender === windowRef.webContents);
+  return Boolean(!shuttingDown && windowRef && !windowRef.isDestroyed() && event.sender === windowRef.webContents);
 }
 
 function forwardDeepLink(commandLine: string[]): void {
+  if (shuttingDown) return;
   const uri = commandLine.find((value) => value.startsWith("ss14://") || value.startsWith("ss14s://"));
   if (!uri) return;
   void worker.invoke("app.openDeepLink", { uri }).catch((error) => {
-    windowRef?.webContents.send("launcher-error", { message: error instanceof Error ? error.message : String(error) });
+    sendToRenderer("launcher-error", { message: error instanceof Error ? error.message : String(error) });
   });
 }
 
@@ -122,7 +149,7 @@ async function start(): Promise<void> {
   }
 
   app.on("second-instance", (_event, commandLine) => {
-    if (windowRef) {
+    if (!shuttingDown && windowRef && !windowRef.isDestroyed()) {
       if (windowRef.isMinimized()) windowRef.restore();
       windowRef.focus();
     }
@@ -133,6 +160,7 @@ async function start(): Promise<void> {
   if (!app.isDefaultProtocolClient("ss14s")) app.setAsDefaultProtocolClient("ss14s");
 
   const migration = await prepareDataMigration();
+  if (shuttingDown) return;
   if (migration.status === "error") {
     console.error(`[mados-migration] ${migration.message ?? "Migration failed"}`);
   } else if (migration.status === "legacy-compatible") {
@@ -140,11 +168,12 @@ async function start(): Promise<void> {
   }
 
   worker.on("event", (event) => {
+    if (shuttingDown) return;
     discordPresence.handleWorkerEvent(event);
-    windowRef?.webContents.send("worker-event", event);
+    sendToRenderer("worker-event", event);
   });
-  worker.on("process-error", (error) => windowRef?.webContents.send("launcher-error", { message: error.message }));
-  worker.on("process-exit", (details) => windowRef?.webContents.send("launcher-error", { message: `Worker stopped (${details.code ?? "signal"})` }));
+  worker.on("process-error", (error) => sendToRenderer("launcher-error", { message: error.message }));
+  worker.on("process-exit", (details) => sendToRenderer("launcher-error", { message: `Worker stopped (${details.code ?? "signal"})` }));
   windowRef = createWindow();
   windowRef.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   worker.start();
@@ -168,7 +197,7 @@ function setupAutoUpdater(): void {
 }
 
 function sendShellUpdateEvent(event: string, data: unknown): void {
-  windowRef?.webContents.send("worker-event", { v: 1, event, data });
+  sendToRenderer("worker-event", { v: 1, event, data });
 }
 
 app.whenReady().then(start).catch((error) => {
@@ -180,6 +209,7 @@ app.whenReady().then(start).catch((error) => {
 // worker is alive; Windows/Linux use process.argv and second-instance.
 app.on("open-url", (event, url) => {
   event.preventDefault();
+  if (shuttingDown) return;
   if (windowRef) forwardDeepLink([url]);
   else pendingDeepLinks.push(url);
 });
@@ -233,9 +263,30 @@ ipcMain.on("install-update", (event) => {
   if (app.isPackaged) autoUpdater.quitAndInstall();
 });
 
-app.on("before-quit", () => {
-  void discordPresence.stop();
-  void worker.stop();
+app.on("before-quit", (event) => {
+  if (shutdownComplete) return;
+  event.preventDefault();
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  const finishQuit = () => {
+    if (shutdownComplete) return;
+    shutdownComplete = true;
+    app.quit();
+  };
+  // Let the worker flush its data and Discord clear the activity before Electron
+  // exits, without keeping the app alive indefinitely if a service hangs.
+  const deadline = setTimeout(() => {
+    console.warn("[mados] Shutdown deadline reached");
+    finishQuit();
+  }, 5_000);
+  void Promise.allSettled([discordPresence.stop(), worker.stop()]).then((results) => {
+    clearTimeout(deadline);
+    for (const result of results) {
+      if (result.status === "rejected") console.error("[mados] Service shutdown failed", result.reason);
+    }
+    finishQuit();
+  });
 });
 
 app.on("window-all-closed", () => {

@@ -1,6 +1,6 @@
 {
   "name": "mados-launcher",
-  "version": "0.40.1",
+  "version": "0.40.2",
   "description": "Mados Launcher for Space Station 14",
   "author": "Mados Launcher contributors",
   "main": "dist/main/main.js",
@@ -55,19 +55,27 @@
       {
         "from": "staging/worker",
         "to": "worker",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "protocols": [
       {
         "name": "Space Station 14 connection",
-        "schemes": ["ss14", "ss14s"]
+        "schemes": [
+          "ss14",
+          "ss14s"
+        ]
       }
     ],
     "win": {
       "icon": "src/renderer/assets/cat-logo.ico",
       "signAndEditExecutable": false,
-      "target": ["nsis", "zip"],
+      "target": [
+        "nsis",
+        "zip"
+      ],
       "artifactName": "Mados.Launcher.Windows.${arch}.${ext}"
     },
     "nsis": {
@@ -78,13 +86,19 @@
     },
     "mac": {
       "icon": "src/renderer/assets/cat-logo.icns",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.games",
       "artifactName": "Mados.Launcher.macOS.${arch}.${ext}"
     },
     "linux": {
       "icon": "src/renderer/assets/icons",
-      "target": ["AppImage", "zip"],
+      "target": [
+        "AppImage",
+        "zip"
+      ],
       "category": "Game",
       "artifactName": "Mados.Launcher.Linux.${arch}.${ext}"
     },

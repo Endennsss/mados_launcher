@@ -15,6 +15,8 @@ export class WorkerClient extends EventEmitter {
   private sequence = 0;
   private readonly pending = new Map<string, Pending>();
   private readonly ready: Promise<void>;
+  private exited: Promise<void> = Promise.resolve();
+  private stopping: Promise<void> | undefined;
   private markReady!: () => void;
   private markReadyError!: (error: Error) => void;
 
@@ -24,13 +26,16 @@ export class WorkerClient extends EventEmitter {
       this.markReady = resolveReady;
       this.markReadyError = rejectReady;
     });
+    // Startup can fail before the renderer makes its first request. Requests
+    // still receive the original rejection; the process-error event reports it.
+    void this.ready.catch(() => undefined);
   }
 
   public start(): void {
-    if (this.process) return;
+    if (this.process || this.stopping) return;
 
     const spec = workerSpec();
-    this.process = spawn(spec.command, spec.args, {
+    const child = this.process = spawn(spec.command, spec.args, {
       cwd: spec.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -39,6 +44,8 @@ export class WorkerClient extends EventEmitter {
         SS14_LAUNCHER_APPDATA_NAME: process.env.SS14_LAUNCHER_APPDATA_NAME ?? "launcher",
       },
     });
+    let markExited!: () => void;
+    this.exited = new Promise<void>((resolveExit) => { markExited = resolveExit; });
 
     let buffer = "";
     this.process.stdout.setEncoding("utf8");
@@ -61,19 +68,29 @@ export class WorkerClient extends EventEmitter {
     this.process.on("error", (error) => {
       this.markReadyError(error);
       this.rejectAll(error);
+      if (!child.pid) {
+        this.process = undefined;
+        markExited();
+      }
       this.emit("process-error", error);
+    });
+    child.stdin.on("error", (error) => {
+      this.rejectAll(error);
+      if (!this.stopping) this.emit("process-error", error);
     });
     this.process.on("exit", (code, signal) => {
       const error = new Error(`Launcher worker exited (${code ?? "signal " + signal})`);
       this.markReadyError(error);
       this.rejectAll(error);
-      this.emit("process-exit", { code, signal });
       this.process = undefined;
+      markExited();
+      this.emit("process-exit", { code, signal });
     });
   }
 
   public async invoke<T>(method: string, params?: unknown): Promise<T> {
     await this.ready;
+    if (this.stopping && method !== "app.shutdown") throw new Error("Launcher worker is shutting down");
     if (!this.process?.stdin.writable) {
       throw new Error("Launcher worker is not running");
     }
@@ -90,15 +107,42 @@ export class WorkerClient extends EventEmitter {
     });
   }
 
-  public async stop(): Promise<void> {
-    if (!this.process) return;
+  public stop(): Promise<void> {
+    return this.stopping ??= this.stopProcess();
+  }
+
+  private async stopProcess(): Promise<void> {
+    const child = this.process;
+    if (!child) return;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
-      await this.invoke("app.shutdown");
+      await Promise.race([
+        (async () => {
+          await this.invoke("app.shutdown");
+          // Acknowledging shutdown is not the same as exiting: the worker still
+          // has to close databases, its Loader pipe, and log files.
+          await this.exited;
+        })(),
+        new Promise<void>((resolveTimeout) => { deadline = setTimeout(resolveTimeout, 3_000); }),
+      ]);
     } catch {
       // The process may already be gone during application shutdown.
+    } finally {
+      clearTimeout(deadline);
     }
-    this.process.kill();
-    this.process = undefined;
+    // Capture the child before awaiting: its exit handler may already have
+    // cleared this.process by the time the shutdown response is handled.
+    if (this.process === child) {
+      child.kill();
+      try {
+        await Promise.race([
+          this.exited,
+          new Promise<void>((resolveTimeout) => { deadline = setTimeout(resolveTimeout, 1_000); }),
+        ]);
+      } finally {
+        clearTimeout(deadline);
+      }
+    }
   }
 
   private handleLine(line: string): void {
