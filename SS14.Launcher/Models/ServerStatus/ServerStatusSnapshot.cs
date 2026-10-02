@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.IO;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using SS14.Launcher.Api;
@@ -29,7 +31,7 @@ public sealed record ServerStatusSnapshot(
 {
     public static ServerStatusSnapshot FromStatus(ServerApi.ServerStatus status, long? pingMs)
     {
-        var tags = status.Tags ?? Array.Empty<string>();
+        var tags = status.Tags?.Where(tag => !string.IsNullOrWhiteSpace(tag)).ToArray() ?? Array.Empty<string>();
         return new ServerStatusSnapshot(
             status.Name,
             Math.Max(0, status.PlayerCount),
@@ -45,7 +47,8 @@ public sealed record ServerStatusSnapshot(
 
     public static string? FindTagValue(IEnumerable<string> tags, string prefix)
     {
-        return tags.FirstOrDefault(tag => tag.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))?[prefix.Length..].Trim();
+        return tags.Where(tag => tag != null && tag.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Select(tag => tag[prefix.Length..].Trim()).FirstOrDefault(value => value.Length > 0);
     }
 }
 
@@ -53,7 +56,8 @@ public static class ServerStatusProbe
 {
     public static async Task<ServerStatusSnapshot?> FetchAsync(HttpClient http, string address, CancellationToken cancel)
     {
-        if (!UriHelper.TryParseSs14Uri(address, out var parsedAddress))
+        var safeAddress = PresenceAddress.Sanitize(address);
+        if (safeAddress == null || !UriHelper.TryParseSs14Uri(safeAddress, out var parsedAddress))
             return null;
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
@@ -66,7 +70,11 @@ public static class ServerStatusProbe
                 UriHelper.GetServerStatusAddress(parsedAddress), timeout.Token);
             return status == null ? null : ServerStatusSnapshot.FromStatus(status, Math.Max(0, stopwatch.ElapsedMilliseconds));
         }
-        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or InvalidOperationException or UriFormatException)
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or InvalidOperationException or UriFormatException or JsonException or IOException)
         {
             return null;
         }

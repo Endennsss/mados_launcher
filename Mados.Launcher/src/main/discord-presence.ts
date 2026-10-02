@@ -79,7 +79,10 @@ export class DiscordPresenceService {
   private stopped = false;
   private rendering: Promise<void> | undefined;
 
-  public constructor(private readonly onStatus: (status: DiscordPresenceStatus) => void) {}
+  public constructor(
+    private readonly onStatus: (status: DiscordPresenceStatus) => void,
+    private readonly clientFactory: () => Client = () => new Client({ clientId: DISCORD_CLIENT_ID }),
+  ) {}
 
   public handleWorkerEvent(event: WorkerEvent): void {
     if (event.event !== "presence.updated") return;
@@ -122,7 +125,7 @@ export class DiscordPresenceService {
     if (this.client?.isConnected) return this.client;
     if (this.connecting) return this.connecting;
     this.connecting = (async () => {
-      const client = new Client({ clientId: DISCORD_CLIENT_ID });
+      const client = this.clientFactory();
       client.on("connected", () => this.onStatus("connected"));
       client.on("ready", () => this.onStatus("connected"));
       client.on("disconnected", () => this.markUnavailable());

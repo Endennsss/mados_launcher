@@ -20,6 +20,7 @@ using SS14.Launcher.Models.Data;
 using SS14.Launcher.Models.Logins;
 using SS14.Launcher.Models.OverrideAssets;
 using SS14.Launcher.Models.Playtime;
+using SS14.Launcher.Models.Presence;
 using SS14.Launcher.Models.ServerStatus;
 using SS14.Launcher.Utility;
 
@@ -62,9 +63,7 @@ public sealed class WorkerHost
 
     private Task? _connectionTask;
     private CancellationTokenSource? _connectionCancellation;
-    private CancellationTokenSource? _presenceCancellation;
-    private Task? _presenceTask;
-    private PresenceConnection? _presenceConnection;
+    private readonly PresenceTracker _presence;
 
     private WorkerHost(TextWriter output)
     {
@@ -81,6 +80,11 @@ public sealed class WorkerHost
         _connector = new Connector();
         _playtimeStore = new PlaytimeStore();
         _playtimeTracker = new PlaytimeTracker(_playtimeStore, update => SendEvent("playtime.updated", update));
+
+        _presence = new PresenceTracker(
+            (address, cancel) => ServerStatusProbe.FetchAsync(_http, address, cancel),
+            snapshot => SendEvent("presence.updated", snapshot),
+            UpdateServerSnapshot);
 
         _connector.PropertyChanged += ConnectorOnPropertyChanged;
         _updater.PropertyChanged += UpdaterOnPropertyChanged;
@@ -105,7 +109,7 @@ public sealed class WorkerHost
                 _login.ActiveAccountId = selected;
             }
             SendEvent("app.ready", await GetStateAsync());
-            SendLauncherPresence();
+            ConfigurePresence();
             _legacyBridge = new WorkerCommandBridge(HandleLegacyCommandAsync);
             _legacyBridge.Start();
         }
@@ -129,7 +133,7 @@ public sealed class WorkerHost
         }
 
         _connectionCancellation?.Cancel();
-        StopPresenceTracking();
+        _presence.Dispose();
         _playtimeTracker.Stop();
         if (_legacyBridge != null)
             await _legacyBridge.DisposeAsync();
@@ -362,6 +366,7 @@ public sealed class WorkerHost
         _login.ActiveAccountId = loginInfo.UserId;
         _data.CommitConfig();
         SendEvent("auth.changed", new { accounts = GetAccounts(), activeAccount = GetAccountDto(_login.ActiveAccount) });
+        ConfigurePresence();
         return GetAccountDto(_login.ActiveAccount)!;
     }
 
@@ -383,6 +388,7 @@ public sealed class WorkerHost
         }
         _data.CommitConfig();
         SendEvent("auth.changed", new { accounts = GetAccounts(), activeAccount = GetAccountDto(_login.ActiveAccount) });
+        ConfigurePresence();
         return new { ok = true };
     }
 
@@ -394,6 +400,7 @@ public sealed class WorkerHost
 
         _login.ActiveAccountId = accountId;
         SendEvent("auth.changed", new { accounts = GetAccounts(), activeAccount = GetAccountDto(_login.ActiveAccount) });
+        ConfigurePresence();
         return GetAccountDto(_login.ActiveAccount)!;
     }
 
@@ -463,7 +470,7 @@ public sealed class WorkerHost
         {
             foreach (var server in servers.Values)
             {
-                _serverSnapshots[server.Address] = new ServerStatusSnapshot(
+                _serverSnapshots[PresenceAddress.Sanitize(server.Address) ?? server.Address] = new ServerStatusSnapshot(
                     server.Name,
                     server.PlayerCount,
                     server.SoftMaxPlayerCount,
@@ -732,10 +739,7 @@ public sealed class WorkerHost
 
         _data.CommitConfig();
         SendEvent("settings.changed", new { discord = GetDiscordSettings() });
-        if (!_data.GetCVar(CVars.DiscordPresenceEnabled))
-            SendLauncherPresence();
-        else
-            PublishCurrentPresence();
+        ConfigurePresence();
         return GetSettings();
     }
 
@@ -800,14 +804,8 @@ public sealed class WorkerHost
         if (_connectionTask is { IsCompleted: false })
             throw new WorkerRpcException(new WorkerError("CONNECTION_BUSY", "A connection is already in progress"));
 
-        StopPresenceTracking();
-        _presenceConnection = new PresenceConnection(
-            address,
-            serverName,
-            _login.ActiveAccount?.Username,
-            snapshot);
-        SendPresenceSnapshot("connecting", snapshot, null);
-        _playtimeTracker.Prepare(_login.ActiveAccountId, address, serverName, countable: true);
+        _presence.Prepare(address, serverName, _login.ActiveAccount?.Username, snapshot);
+        _playtimeTracker.Prepare(_login.ActiveAccountId, PresenceAddress.Sanitize(address) ?? address, serverName, countable: true);
         _connectionCancellation?.Dispose();
         _connectionCancellation = new CancellationTokenSource();
         _connectionTask = ObserveConnectionAsync(address, reason, _connectionCancellation.Token);
@@ -825,8 +823,7 @@ public sealed class WorkerHost
         catch (Exception error)
         {
             Log.Error(error, "Unhandled connection failure");
-            StopPresenceTracking();
-            SendLauncherPresence();
+            _presence.ObserveStatus(Connector.ConnectionStatus.ConnectionFailed);
             SendEvent("connection.failed", new { target = PresenceAddress.Sanitize(address), status = "ConnectionFailed", message = "The connection could not be completed" });
         }
     }
@@ -834,6 +831,7 @@ public sealed class WorkerHost
     private object CancelConnection()
     {
         _connectionCancellation?.Cancel();
+        _presence.ObserveStatus(Connector.ConnectionStatus.Cancelled);
         return new { cancelled = true };
     }
 
@@ -856,9 +854,7 @@ public sealed class WorkerHost
         if (_connectionTask is { IsCompleted: false })
             throw new WorkerRpcException(new WorkerError("CONNECTION_BUSY", "A connection is already in progress"));
 
-        StopPresenceTracking();
-        _presenceConnection = null;
-        SendLauncherPresence();
+        _presence.Prepare(null, null, null);
         _playtimeTracker.Prepare(null, path, null, countable: false);
         _connectionCancellation?.Dispose();
         _connectionCancellation = new CancellationTokenSource();
@@ -877,7 +873,7 @@ public sealed class WorkerHost
         catch (Exception error)
         {
             Log.Error(error, "Unhandled content bundle failure");
-            SendLauncherPresence();
+            _presence.ObserveStatus(Connector.ConnectionStatus.ConnectionFailed);
             SendEvent("connection.failed", new { target = Path.GetFileName(path), status = "ConnectionFailed", message = "The content bundle could not be opened" });
         }
     }
@@ -932,7 +928,7 @@ public sealed class WorkerHost
 
     private object Shutdown()
     {
-        StopPresenceTracking();
+        _presence.Dispose();
         _playtimeTracker.Stop();
         _shutdown.Cancel();
         return new { shuttingDown = true };
@@ -941,115 +937,22 @@ public sealed class WorkerHost
     private ServerStatusSnapshot? GetServerSnapshot(string address)
     {
         lock (_serverSnapshotLock)
-            return _serverSnapshots.TryGetValue(address, out var snapshot) ? snapshot : null;
+            return _serverSnapshots.TryGetValue(PresenceAddress.Sanitize(address) ?? address, out var snapshot) ? snapshot : null;
     }
 
     private void UpdateServerSnapshot(string address, ServerStatusSnapshot snapshot)
     {
         lock (_serverSnapshotLock)
-            _serverSnapshots[address] = snapshot;
+            _serverSnapshots[PresenceAddress.Sanitize(address) ?? address] = snapshot;
     }
 
-    private void StartPresenceTracking()
+    private void ConfigurePresence()
     {
-        if (_presenceConnection is not { } connection)
-            return;
-
-        StopPresenceTracking();
-        connection.StartedAtUtc = DateTimeOffset.UtcNow;
-        _presenceCancellation = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
-        _presenceTask = PresenceLoopAsync(connection, _presenceCancellation.Token);
+        _presence.Configure(
+            _data.GetCVar(CVars.DiscordPresenceEnabled),
+            _data.GetCVar(CVars.DiscordPresenceShowNickname),
+            _login.ActiveAccount?.Username);
     }
-
-    private void StopPresenceTracking()
-    {
-        _presenceCancellation?.Cancel();
-        _presenceCancellation?.Dispose();
-        _presenceCancellation = null;
-        _presenceTask = null;
-    }
-
-    private async Task PresenceLoopAsync(PresenceConnection connection, CancellationToken cancel)
-    {
-        try
-        {
-            SendPresenceSnapshot("playing", connection.InitialSnapshot, connection);
-            while (!cancel.IsCancellationRequested)
-            {
-                var snapshot = await ServerStatusProbe.FetchAsync(_http, connection.Address, cancel);
-                if (snapshot != null)
-                {
-                    connection.InitialSnapshot = snapshot;
-                    UpdateServerSnapshot(connection.Address, snapshot);
-                }
-
-                SendPresenceSnapshot("playing", snapshot ?? connection.InitialSnapshot, connection);
-                await Task.Delay(TimeSpan.FromSeconds(30), cancel);
-            }
-        }
-        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
-        {
-            // Normal when the client exits or the worker shuts down.
-        }
-        catch (Exception error)
-        {
-            Log.Warning(error, "Discord presence status polling stopped");
-        }
-    }
-
-    private void PublishCurrentPresence()
-    {
-        if (_presenceConnection is { } connection && _connector.Status == Connector.ConnectionStatus.ClientRunning)
-        {
-            SendPresenceSnapshot("playing", connection.InitialSnapshot, connection);
-            return;
-        }
-
-        if (_presenceConnection != null && _connector.Status is Connector.ConnectionStatus.Updating)
-        {
-            SendPresenceSnapshot("updating", _presenceConnection.InitialSnapshot, _presenceConnection);
-            return;
-        }
-
-        SendLauncherPresence();
-    }
-
-    private void SendLauncherPresence()
-    {
-        SendPresenceSnapshot("launcher", null, null);
-    }
-
-    private void SendPresenceSnapshot(string state, ServerStatusSnapshot? snapshot, PresenceConnection? connection)
-    {
-        if (connection != null && !ReferenceEquals(_presenceConnection, connection))
-            return;
-
-        var showNickname = _data.GetCVar(CVars.DiscordPresenceShowNickname);
-        var enabled = _data.GetCVar(CVars.DiscordPresenceEnabled);
-        var active = connection ?? _presenceConnection;
-        var serverName = active?.ServerName ?? snapshot?.Name;
-        var address = active?.Address;
-        var startedAt = active?.StartedAtUtc;
-        SendEvent("presence.updated", new
-        {
-            state,
-            enabled,
-            showNickname,
-            accountName = showNickname ? active?.AccountName ?? _login.ActiveAccount?.Username : null,
-            serverName,
-            // A deep link can contain a connection token. Presence is sent to
-            // Electron and may then be sent to Discord, so remove credentials
-            // and query/fragment data at the worker boundary.
-            address = state == "launcher" ? null : PresenceAddress.Sanitize(address),
-            playerCount = snapshot?.PlayerCount,
-            softMaxPlayerCount = snapshot?.SoftMaxPlayerCount,
-            pingMs = snapshot?.PingMs,
-            map = snapshot?.Map,
-            mode = snapshot?.Mode,
-            startedAt = state == "playing" ? startedAt : null
-        });
-    }
-
 
     private void ConnectorOnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -1062,29 +965,7 @@ public sealed class WorkerHost
                 privacyPolicy = _connector.PrivacyPolicyInfo
             });
 
-            switch (_connector.Status)
-            {
-                case Connector.ConnectionStatus.Updating:
-                    SendPresenceSnapshot("updating", _presenceConnection?.InitialSnapshot, _presenceConnection);
-                    break;
-                case Connector.ConnectionStatus.Connecting:
-                case Connector.ConnectionStatus.AwaitingPrivacyPolicyAcceptance:
-                case Connector.ConnectionStatus.StartingClient:
-                    SendPresenceSnapshot("connecting", _presenceConnection?.InitialSnapshot, _presenceConnection);
-                    break;
-                case Connector.ConnectionStatus.ClientRunning:
-                    StartPresenceTracking();
-                    break;
-                case Connector.ConnectionStatus.ClientExited:
-                case Connector.ConnectionStatus.ConnectionFailed:
-                case Connector.ConnectionStatus.UpdateError:
-                case Connector.ConnectionStatus.Cancelled:
-                case Connector.ConnectionStatus.NotAContentBundle:
-                    StopPresenceTracking();
-                    _presenceConnection = null;
-                    SendLauncherPresence();
-                    break;
-            }
+            _presence.ObserveStatus(_connector.Status);
         }
     }
 
@@ -1158,15 +1039,6 @@ public sealed class WorkerHost
             return true;
         value = default;
         return false;
-    }
-
-    private sealed class PresenceConnection(string address, string? serverName, string? accountName, ServerStatusSnapshot? initialSnapshot)
-    {
-        public string Address { get; } = address;
-        public string? ServerName { get; } = serverName;
-        public string? AccountName { get; } = accountName;
-        public ServerStatusSnapshot? InitialSnapshot { get; set; } = initialSnapshot;
-        public DateTimeOffset? StartedAtUtc { get; set; }
     }
 
     private sealed record ServerDto(

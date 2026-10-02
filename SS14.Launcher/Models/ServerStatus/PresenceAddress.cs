@@ -13,7 +13,7 @@ public static class PresenceAddress
         if (string.IsNullOrWhiteSpace(address))
             return null;
 
-        if (Uri.TryCreate(address, UriKind.Absolute, out var parsed))
+        if (UriHelper.TryParseSs14Uri(address.Trim(), out var parsed))
         {
             var builder = new UriBuilder(parsed)
             {
@@ -25,7 +25,6 @@ public static class PresenceAddress
             return builder.Uri.AbsoluteUri.TrimEnd('/');
         }
 
-        var separator = address.IndexOfAny(['?', '#']);
-        return (separator >= 0 ? address[..separator] : address).Trim();
+        return null;
     }
 }

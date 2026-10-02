@@ -5,7 +5,7 @@
 ## Пройдено
 
 - `dotnet build SS14.Launcher.sln --configuration Debug` — успешно, ошибок нет.
-- `dotnet test SS14.Launcher.sln --configuration Debug --no-restore` — 17/17 тестов.
+- `dotnet test SS14.Launcher.sln --configuration Debug --no-restore` — 19/19 тестов.
 - `npm run typecheck` — успешно.
 - `npm run build` — успешно, renderer собирается с относительными `file://` asset-ссылками.
 - `npm test` — 8/8 contract/presence-тестов.
@@ -13,7 +13,7 @@
 - `npm run prepare-worker` — успешно для `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`; publish self-contained.
 - `electron-builder --win --x64` — успешно: NSIS и ZIP, локально unsigned.
 - Debug playtime package `Mados.Launcher.Debug.Playtime.Windows.x64.zip` — собран для Windows x64, локально unsigned.
-- Debug Discord package `artifacts/Mados.Launcher.Debug.Discord.Windows.x64.zip` — portable Windows x64, собран с реальным worker и проверен запуском упакованного приложения; SHA-256 `A49C66AF642CC7274B43DB6DFDFC39A12E486B8555057C9EAA17F1A071FF5184`.
+- Debug Discord package `artifacts/Mados.Launcher.Debug.Discord.Windows.x64.v2.zip` — portable Windows x64, собран с реальным worker и проверен запуском упакованного приложения; SHA-256 `53B991801D37EF54E1046F9F11890F565FBAA03D399028D40942DC0713134E64`.
 - GitHub Releases news source — worker merges releases from `Endennsss/mados_launcher` with the official RSS feed and keeps source/date/summary in the response.
 
 ## Время игры
@@ -24,12 +24,14 @@
 - `ServerPingProbeTests` проверяют, что ping запрашивает `/status` конкретного сервера и возвращает пустое значение при недоступности.
 - `ServerStatusSnapshotTests` проверяют явные теги `map:`/`mode:` и отсутствие догадок при их отсутствии.
 - `PresenceAddressTests` проверяют очистку query, fragment и userinfo до отправки в Electron/Discord.
+- `PresenceTrackerTests` проверяют переход `ClientRunning` → `ClientExited`, polling только для живой игры и исключение ZIP/replay.
 - `discord-presence.test.ts` проверяет форматирование активности, fallback очищенного адреса и скрытие ника.
 
 ## Runtime smoke
 
 - packed Electron запускается с ровно одним `Mados.Worker` и корректно закрывает worker;
 - JSON-RPC отвечает на `app.getVersion`, `app.getState`, `app.openDeepLink`, `app.shutdown`;
+- Worker smoke получил `presence.updated` при старте, `settings.changed` и очистку Presence при выключении настройки; payload не содержит токенов.
 - `app.ready`, `deepLink.received`, connection/update events проходят через stdio;
 - SQLite migration создаёт marker/backup в изолированном каталоге и сохраняет старые cache roots;
 - legacy named-pipe bridge принимает URI Loader и hex-команды `C`/`R`;

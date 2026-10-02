@@ -303,7 +303,6 @@ public partial class Connector : ObservableObject
             {
                 Status = ConnectionStatus.ClientRunning;
                 await waitClient;
-                return;
             }
 
             ClientExitedBadly = clientProc.ExitCode != 0;

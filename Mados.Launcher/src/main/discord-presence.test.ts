@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { buildDiscordActivity } from "./discord-presence";
+import { describe, expect, it, vi } from "vitest";
+import { DiscordPresenceService, buildDiscordActivity } from "./discord-presence";
+import type { Client } from "@xhayper/discord-rpc";
 import type { PresenceSnapshot } from "../contracts/launcher";
 
 const playing: PresenceSnapshot = {
@@ -37,5 +38,31 @@ describe("Discord presence formatting", () => {
     const activity = buildDiscordActivity({ ...playing, showNickname: false });
     expect(activity.state).toBe("Roleplay · Онлайн 12/80 · Ping 34 ms");
     expect(activity.state).not.toContain("Ende");
+  });
+});
+
+describe("Discord presence lifecycle", () => {
+  it("sets activity on a structured playing event and clears it when disabled", async () => {
+    const statuses: string[] = [];
+    const fake = {
+      isConnected: true,
+      user: {
+        setActivity: vi.fn(async () => undefined),
+        clearActivity: vi.fn(async () => undefined),
+      },
+      login: vi.fn(async () => undefined),
+      destroy: vi.fn(async () => undefined),
+      on: vi.fn(),
+    };
+    const service = new DiscordPresenceService((status) => statuses.push(status), () => fake as unknown as Client);
+
+    service.handleWorkerEvent({ v: 1, event: "presence.updated", data: playing });
+    await vi.waitFor(() => expect(fake.user.setActivity).toHaveBeenCalledTimes(1));
+    expect(statuses).toContain("connected");
+
+    service.handleWorkerEvent({ v: 1, event: "presence.updated", data: { ...playing, enabled: false } });
+    await vi.waitFor(() => expect(fake.user.clearActivity).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(statuses.at(-1)).toBe("disabled"));
+    await service.stop();
   });
 });
