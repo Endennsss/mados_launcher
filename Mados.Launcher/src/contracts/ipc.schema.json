@@ -55,6 +55,42 @@
   "x-events": [
     "app.ready", "app.error", "auth.changed", "servers.updated", "connection.started",
     "connection.progress", "connection.completed", "connection.failed", "update.progress",
-    "update.completed", "deepLink.received", "playtime.updated"
-  ]
+    "update.completed", "deepLink.received", "playtime.updated", "presence.updated", "settings.changed"
+  ],
+  "x-event-payloads": {
+    "presence.updated": {
+      "type": "object",
+      "required": ["state", "enabled", "showNickname"],
+      "properties": {
+        "state": { "enum": ["launcher", "connecting", "updating", "playing"] },
+        "enabled": { "type": "boolean" },
+        "showNickname": { "type": "boolean" },
+        "accountName": { "type": ["string", "null"] },
+        "serverName": { "type": ["string", "null"] },
+        "address": { "type": ["string", "null"] },
+        "playerCount": { "type": ["integer", "null"] },
+        "softMaxPlayerCount": { "type": ["integer", "null"] },
+        "pingMs": { "type": ["number", "null"] },
+        "map": { "type": ["string", "null"] },
+        "mode": { "type": ["string", "null"] },
+        "startedAt": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "settings.changed": {
+      "type": "object",
+      "properties": {
+        "discord": {
+          "type": "object",
+          "required": ["enabled", "showNickname"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "showNickname": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
 }

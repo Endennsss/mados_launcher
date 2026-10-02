@@ -55,11 +55,16 @@ public sealed class WorkerHost
     private readonly Updater _updater;
     private readonly PlaytimeStore _playtimeStore;
     private readonly PlaytimeTracker _playtimeTracker;
+    private readonly object _serverSnapshotLock = new();
+    private readonly Dictionary<string, ServerStatusSnapshot> _serverSnapshots = new(StringComparer.OrdinalIgnoreCase);
     private WorkerCommandBridge? _legacyBridge;
     private string? _pendingLegacyReason;
 
     private Task? _connectionTask;
     private CancellationTokenSource? _connectionCancellation;
+    private CancellationTokenSource? _presenceCancellation;
+    private Task? _presenceTask;
+    private PresenceConnection? _presenceConnection;
 
     private WorkerHost(TextWriter output)
     {
@@ -100,6 +105,7 @@ public sealed class WorkerHost
                 _login.ActiveAccountId = selected;
             }
             SendEvent("app.ready", await GetStateAsync());
+            SendLauncherPresence();
             _legacyBridge = new WorkerCommandBridge(HandleLegacyCommandAsync);
             _legacyBridge.Start();
         }
@@ -123,6 +129,7 @@ public sealed class WorkerHost
         }
 
         _connectionCancellation?.Cancel();
+        StopPresenceTracking();
         _playtimeTracker.Stop();
         if (_legacyBridge != null)
             await _legacyBridge.DisposeAsync();
@@ -297,7 +304,8 @@ public sealed class WorkerHost
                     && processor.Contains("VirtualApple", StringComparison.OrdinalIgnoreCase)
                     && !_data.GetCVar(CVars.HasDismissedRosettaWarning),
                 authOverride = ConfigConstants.IsAuthOverride
-            }
+            },
+            discord = GetDiscordSettings()
         };
     }
 
@@ -411,19 +419,21 @@ public sealed class WorkerHost
                         continue;
 
                     var status = entry.StatusData;
+                    var parsedStatus = ServerStatusSnapshot.FromStatus(status, null);
                     servers[entry.Address] = new ServerDto(
                         entry.Address,
-                        status.Name,
-                        status.PlayerCount,
-                        status.SoftMaxPlayerCount,
-                        status.RoundStartTime,
-                        status.RunLevel?.ToString(),
-                        status.Tags ?? Array.Empty<string>(),
+                        parsedStatus.Name,
+                        parsedStatus.PlayerCount,
+                        parsedStatus.SoftMaxPlayerCount,
+                        parsedStatus.RoundStartTime,
+                        parsedStatus.RunLevel,
+                        parsedStatus.Tags,
                         "online",
                         display,
                         null,
-                        status.Tags?.FirstOrDefault(tag => tag.StartsWith("lang:", StringComparison.OrdinalIgnoreCase))?[5..],
-                        status.Tags?.FirstOrDefault(tag => tag.StartsWith("map:", StringComparison.OrdinalIgnoreCase))?[4..]);
+                        parsedStatus.Language,
+                        parsedStatus.Map,
+                        parsedStatus.Mode);
                 }
             }
             catch (Exception e)
@@ -446,6 +456,24 @@ public sealed class WorkerHost
             {
                 if (servers.TryGetValue(pingResult.Address, out var server))
                     servers[pingResult.Address] = server with { PingMs = pingResult.PingMs };
+            }
+        }
+
+        lock (_serverSnapshotLock)
+        {
+            foreach (var server in servers.Values)
+            {
+                _serverSnapshots[server.Address] = new ServerStatusSnapshot(
+                    server.Name,
+                    server.PlayerCount,
+                    server.SoftMaxPlayerCount,
+                    server.RoundStartTime,
+                    server.RunLevel,
+                    server.Tags,
+                    server.PingMs,
+                    server.Language,
+                    server.Map,
+                    server.Mode);
             }
         }
 
@@ -494,12 +522,21 @@ public sealed class WorkerHost
         try
         {
             using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            var info = await _hub.GetServerInfo(address, hubAddress, cancel.Token);
+            var infoTask = _hub.GetServerInfo(address, hubAddress, cancel.Token);
+            var statusTask = ServerStatusProbe.FetchAsync(_http, address, cancel.Token);
+            var info = await infoTask;
+            var status = await statusTask;
             return new
             {
                 description = info.Desc,
                 links = info.Links?.Select(link => new { name = link.Name, icon = link.Icon, url = link.Url }).ToArray()
-                         ?? Array.Empty<object>()
+                         ?? Array.Empty<object>(),
+                status = status == null ? "offline" : "online",
+                playerCount = status?.PlayerCount,
+                softMaxPlayerCount = status?.SoftMaxPlayerCount,
+                pingMs = status?.PingMs,
+                map = status?.Map,
+                mode = status?.Mode
             };
         }
         catch (Exception e) when (e is HttpRequestException or IOException or JsonException or TaskCanceledException)
@@ -657,7 +694,18 @@ public sealed class WorkerHost
             accountManagementUrl = ConfigConstants.AccountManagementUrl,
             registerUrl = ConfigConstants.AccountRegisterUrl,
             discordUrl = ConfigConstants.DiscordUrl,
-            websiteUrl = ConfigConstants.WebsiteUrl
+            websiteUrl = ConfigConstants.WebsiteUrl,
+            discordPresenceEnabled = _data.GetCVar(CVars.DiscordPresenceEnabled),
+            discordPresenceShowNickname = _data.GetCVar(CVars.DiscordPresenceShowNickname)
+        };
+    }
+
+    private object GetDiscordSettings()
+    {
+        return new
+        {
+            enabled = _data.GetCVar(CVars.DiscordPresenceEnabled),
+            showNickname = _data.GetCVar(CVars.DiscordPresenceShowNickname)
         };
     }
 
@@ -669,6 +717,10 @@ public sealed class WorkerHost
             _data.SetCVar(CVars.LogLauncherVerbose, verboseLogging.GetBoolean());
         if (TryGetProperty(parameters, "overrideAssets", out var overrideAssets))
             _data.SetCVar(CVars.OverrideAssets, overrideAssets.GetBoolean());
+        if (TryGetProperty(parameters, "discordPresenceEnabled", out var discordPresenceEnabled))
+            _data.SetCVar(CVars.DiscordPresenceEnabled, discordPresenceEnabled.GetBoolean());
+        if (TryGetProperty(parameters, "discordPresenceShowNickname", out var discordPresenceShowNickname))
+            _data.SetCVar(CVars.DiscordPresenceShowNickname, discordPresenceShowNickname.GetBoolean());
         if (TryGetProperty(parameters, "language", out var language))
             _data.SetCVar(CVars.Language, language.ValueKind == JsonValueKind.Null ? null : language.GetString());
         if (TryGetProperty(parameters, "dismissEarlyAccess", out var dismissEarlyAccess) && dismissEarlyAccess.GetBoolean())
@@ -679,6 +731,11 @@ public sealed class WorkerHost
             _data.SetCVar(CVars.HasDismissedRosettaWarning, true);
 
         _data.CommitConfig();
+        SendEvent("settings.changed", new { discord = GetDiscordSettings() });
+        if (!_data.GetCVar(CVars.DiscordPresenceEnabled))
+            SendLauncherPresence();
+        else
+            PublishCurrentPresence();
         return GetSettings();
     }
 
@@ -737,20 +794,29 @@ public sealed class WorkerHost
     {
         var address = RequiredString(parameters, "address");
         var reason = OptionalString(parameters, "reason");
-        var serverName = OptionalString(parameters, "name");
+        var requestedName = OptionalString(parameters, "name");
+        var snapshot = GetServerSnapshot(address);
+        var serverName = string.IsNullOrWhiteSpace(requestedName) ? snapshot?.Name : requestedName;
         if (_connectionTask is { IsCompleted: false })
             throw new WorkerRpcException(new WorkerError("CONNECTION_BUSY", "A connection is already in progress"));
 
+        StopPresenceTracking();
+        _presenceConnection = new PresenceConnection(
+            address,
+            serverName,
+            _login.ActiveAccount?.Username,
+            snapshot);
+        SendPresenceSnapshot("connecting", snapshot, null);
         _playtimeTracker.Prepare(_login.ActiveAccountId, address, serverName, countable: true);
         _connectionCancellation?.Dispose();
         _connectionCancellation = new CancellationTokenSource();
         _connectionTask = ObserveConnectionAsync(address, reason, _connectionCancellation.Token);
-        return new { started = true, address, reason, name = serverName };
+        return new { started = true, address = PresenceAddress.Sanitize(address), reason, name = serverName };
     }
 
     private async Task ObserveConnectionAsync(string address, string? reason, CancellationToken cancel)
     {
-        SendEvent("connection.started", new { address, reason });
+        SendEvent("connection.started", new { address = PresenceAddress.Sanitize(address), reason });
         try
         {
             await _connector.ConnectAsync(address, cancel);
@@ -759,7 +825,9 @@ public sealed class WorkerHost
         catch (Exception error)
         {
             Log.Error(error, "Unhandled connection failure");
-            SendEvent("connection.failed", new { target = address, status = "ConnectionFailed", message = "The connection could not be completed" });
+            StopPresenceTracking();
+            SendLauncherPresence();
+            SendEvent("connection.failed", new { target = PresenceAddress.Sanitize(address), status = "ConnectionFailed", message = "The connection could not be completed" });
         }
     }
 
@@ -788,6 +856,9 @@ public sealed class WorkerHost
         if (_connectionTask is { IsCompleted: false })
             throw new WorkerRpcException(new WorkerError("CONNECTION_BUSY", "A connection is already in progress"));
 
+        StopPresenceTracking();
+        _presenceConnection = null;
+        SendLauncherPresence();
         _playtimeTracker.Prepare(null, path, null, countable: false);
         _connectionCancellation?.Dispose();
         _connectionCancellation = new CancellationTokenSource();
@@ -797,7 +868,7 @@ public sealed class WorkerHost
 
     private async Task ObserveContentBundleAsync(string path, CancellationToken cancel)
     {
-        SendEvent("connection.started", new { path, contentBundle = true });
+        SendEvent("connection.started", new { path = Path.GetFileName(path), contentBundle = true });
         try
         {
             await _connector.LaunchContentBundlePathAsync(path, cancel);
@@ -806,7 +877,8 @@ public sealed class WorkerHost
         catch (Exception error)
         {
             Log.Error(error, "Unhandled content bundle failure");
-            SendEvent("connection.failed", new { target = path, status = "ConnectionFailed", message = "The content bundle could not be opened" });
+            SendLauncherPresence();
+            SendEvent("connection.failed", new { target = Path.GetFileName(path), status = "ConnectionFailed", message = "The content bundle could not be opened" });
         }
     }
 
@@ -818,7 +890,7 @@ public sealed class WorkerHost
             or Connector.ConnectionStatus.NotAContentBundle;
         SendEvent(failed ? "connection.failed" : "connection.completed", new
         {
-            target,
+            target = PresenceAddress.Sanitize(target),
             status = status.ToString(),
             message = failed ? "The connection could not be completed" : null
         });
@@ -834,9 +906,9 @@ public sealed class WorkerHost
             && !string.Equals(parsed.Scheme, "ss14s", StringComparison.OrdinalIgnoreCase))
             throw new WorkerRpcException(new WorkerError("UNSUPPORTED_DEEP_LINK", "Only ss14:// and ss14s:// links are supported"));
 
-        SendEvent("deepLink.received", new { uri });
+        SendEvent("deepLink.received", new { uri = PresenceAddress.Sanitize(uri) });
         StartConnection(JsonSerializer.SerializeToElement(new { address = uri }, JsonOptions));
-        return new { accepted = true, uri };
+        return new { accepted = true, uri = PresenceAddress.Sanitize(uri) };
     }
 
     private async Task<object> GetUpdateStatusAsync()
@@ -860,10 +932,124 @@ public sealed class WorkerHost
 
     private object Shutdown()
     {
+        StopPresenceTracking();
         _playtimeTracker.Stop();
         _shutdown.Cancel();
         return new { shuttingDown = true };
     }
+
+    private ServerStatusSnapshot? GetServerSnapshot(string address)
+    {
+        lock (_serverSnapshotLock)
+            return _serverSnapshots.TryGetValue(address, out var snapshot) ? snapshot : null;
+    }
+
+    private void UpdateServerSnapshot(string address, ServerStatusSnapshot snapshot)
+    {
+        lock (_serverSnapshotLock)
+            _serverSnapshots[address] = snapshot;
+    }
+
+    private void StartPresenceTracking()
+    {
+        if (_presenceConnection is not { } connection)
+            return;
+
+        StopPresenceTracking();
+        connection.StartedAtUtc = DateTimeOffset.UtcNow;
+        _presenceCancellation = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+        _presenceTask = PresenceLoopAsync(connection, _presenceCancellation.Token);
+    }
+
+    private void StopPresenceTracking()
+    {
+        _presenceCancellation?.Cancel();
+        _presenceCancellation?.Dispose();
+        _presenceCancellation = null;
+        _presenceTask = null;
+    }
+
+    private async Task PresenceLoopAsync(PresenceConnection connection, CancellationToken cancel)
+    {
+        try
+        {
+            SendPresenceSnapshot("playing", connection.InitialSnapshot, connection);
+            while (!cancel.IsCancellationRequested)
+            {
+                var snapshot = await ServerStatusProbe.FetchAsync(_http, connection.Address, cancel);
+                if (snapshot != null)
+                {
+                    connection.InitialSnapshot = snapshot;
+                    UpdateServerSnapshot(connection.Address, snapshot);
+                }
+
+                SendPresenceSnapshot("playing", snapshot ?? connection.InitialSnapshot, connection);
+                await Task.Delay(TimeSpan.FromSeconds(30), cancel);
+            }
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            // Normal when the client exits or the worker shuts down.
+        }
+        catch (Exception error)
+        {
+            Log.Warning(error, "Discord presence status polling stopped");
+        }
+    }
+
+    private void PublishCurrentPresence()
+    {
+        if (_presenceConnection is { } connection && _connector.Status == Connector.ConnectionStatus.ClientRunning)
+        {
+            SendPresenceSnapshot("playing", connection.InitialSnapshot, connection);
+            return;
+        }
+
+        if (_presenceConnection != null && _connector.Status is Connector.ConnectionStatus.Updating)
+        {
+            SendPresenceSnapshot("updating", _presenceConnection.InitialSnapshot, _presenceConnection);
+            return;
+        }
+
+        SendLauncherPresence();
+    }
+
+    private void SendLauncherPresence()
+    {
+        SendPresenceSnapshot("launcher", null, null);
+    }
+
+    private void SendPresenceSnapshot(string state, ServerStatusSnapshot? snapshot, PresenceConnection? connection)
+    {
+        if (connection != null && !ReferenceEquals(_presenceConnection, connection))
+            return;
+
+        var showNickname = _data.GetCVar(CVars.DiscordPresenceShowNickname);
+        var enabled = _data.GetCVar(CVars.DiscordPresenceEnabled);
+        var active = connection ?? _presenceConnection;
+        var serverName = active?.ServerName ?? snapshot?.Name;
+        var address = active?.Address;
+        var startedAt = active?.StartedAtUtc;
+        SendEvent("presence.updated", new
+        {
+            state,
+            enabled,
+            showNickname,
+            accountName = showNickname ? active?.AccountName ?? _login.ActiveAccount?.Username : null,
+            serverName,
+            // A deep link can contain a connection token. Presence is sent to
+            // Electron and may then be sent to Discord, so remove credentials
+            // and query/fragment data at the worker boundary.
+            address = state == "launcher" ? null : PresenceAddress.Sanitize(address),
+            playerCount = snapshot?.PlayerCount,
+            softMaxPlayerCount = snapshot?.SoftMaxPlayerCount,
+            pingMs = snapshot?.PingMs,
+            map = snapshot?.Map,
+            mode = snapshot?.Mode,
+            startedAt = state == "playing" ? startedAt : null
+        });
+    }
+
 
     private void ConnectorOnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -875,6 +1061,30 @@ public sealed class WorkerHost
                 status = _connector.Status.ToString(),
                 privacyPolicy = _connector.PrivacyPolicyInfo
             });
+
+            switch (_connector.Status)
+            {
+                case Connector.ConnectionStatus.Updating:
+                    SendPresenceSnapshot("updating", _presenceConnection?.InitialSnapshot, _presenceConnection);
+                    break;
+                case Connector.ConnectionStatus.Connecting:
+                case Connector.ConnectionStatus.AwaitingPrivacyPolicyAcceptance:
+                case Connector.ConnectionStatus.StartingClient:
+                    SendPresenceSnapshot("connecting", _presenceConnection?.InitialSnapshot, _presenceConnection);
+                    break;
+                case Connector.ConnectionStatus.ClientRunning:
+                    StartPresenceTracking();
+                    break;
+                case Connector.ConnectionStatus.ClientExited:
+                case Connector.ConnectionStatus.ConnectionFailed:
+                case Connector.ConnectionStatus.UpdateError:
+                case Connector.ConnectionStatus.Cancelled:
+                case Connector.ConnectionStatus.NotAContentBundle:
+                    StopPresenceTracking();
+                    _presenceConnection = null;
+                    SendLauncherPresence();
+                    break;
+            }
         }
     }
 
@@ -950,6 +1160,15 @@ public sealed class WorkerHost
         return false;
     }
 
+    private sealed class PresenceConnection(string address, string? serverName, string? accountName, ServerStatusSnapshot? initialSnapshot)
+    {
+        public string Address { get; } = address;
+        public string? ServerName { get; } = serverName;
+        public string? AccountName { get; } = accountName;
+        public ServerStatusSnapshot? InitialSnapshot { get; set; } = initialSnapshot;
+        public DateTimeOffset? StartedAtUtc { get; set; }
+    }
+
     private sealed record ServerDto(
         string Address,
         string? Name,
@@ -962,7 +1181,8 @@ public sealed class WorkerHost
         string HubAddress,
         long? PingMs,
         string? Language,
-        string? Map);
+        string? Map,
+        string? Mode);
 
     private sealed record NewsDto(string Title, string Link, DateTime? Date, string Source, string? Summary);
 

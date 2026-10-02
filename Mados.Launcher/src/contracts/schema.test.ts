@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { rendererInvokeSchema, workerEventSchema, workerResponseSchema } from "./schema";
+import { presenceSnapshotSchema, rendererInvokeSchema, workerEventSchema, workerResponseSchema } from "./schema";
 
 const ipcContract = JSON.parse(readFileSync(join(process.cwd(), "src", "contracts", "ipc.schema.json"), "utf8")) as {
   "x-methods": Record<string, string[]>;
@@ -14,6 +14,23 @@ describe("Mados worker contract", () => {
 
   it("accepts events without exposing an unversioned shape", () => {
     expect(workerEventSchema.parse({ v: 1, event: "app.ready", data: {} }).event).toBe("app.ready");
+  });
+
+  it("validates the structured presence event", () => {
+    expect(presenceSnapshotSchema.parse({
+      state: "playing",
+      enabled: true,
+      showNickname: true,
+      accountName: "Ende",
+      serverName: "Mados Station",
+      address: "ss14://station.example:1212?token=hidden",
+      playerCount: 12,
+      softMaxPlayerCount: 80,
+      pingMs: 34,
+      map: "Box",
+      mode: "Roleplay",
+      startedAt: "2026-10-02T12:00:00Z",
+    }).state).toBe("playing");
   });
 
   it("keeps renderer IPC methods on the explicit allowlist", () => {

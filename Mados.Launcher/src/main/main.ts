@@ -3,11 +3,15 @@ import { autoUpdater } from "electron-updater";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { rendererInvokeSchema } from "../contracts/schema";
+import { DiscordPresenceService } from "./discord-presence";
 import { prepareDataMigration } from "./data-migration";
 import { WorkerClient } from "./worker-client";
 
 let windowRef: BrowserWindow | undefined;
 const worker = new WorkerClient();
+const discordPresence = new DiscordPresenceService((status) => {
+  windowRef?.webContents.send("discord-status", { status });
+});
 const pendingDeepLinks: string[] = [];
 
 /**
@@ -135,7 +139,10 @@ async function start(): Promise<void> {
     console.info(`[mados-migration] Existing data retained at ${migration.source?.user}`);
   }
 
-  worker.on("event", (event) => windowRef?.webContents.send("worker-event", event));
+  worker.on("event", (event) => {
+    discordPresence.handleWorkerEvent(event);
+    windowRef?.webContents.send("worker-event", event);
+  });
   worker.on("process-error", (error) => windowRef?.webContents.send("launcher-error", { message: error.message }));
   worker.on("process-exit", (details) => windowRef?.webContents.send("launcher-error", { message: `Worker stopped (${details.code ?? "signal"})` }));
   windowRef = createWindow();
@@ -227,6 +234,7 @@ ipcMain.on("install-update", (event) => {
 });
 
 app.on("before-quit", () => {
+  void discordPresence.stop();
   void worker.stop();
 });
 

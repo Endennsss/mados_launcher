@@ -28,6 +28,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Radio,
   Search,
   Settings,
   ShieldCheck,
@@ -44,6 +45,7 @@ import {
 import type {
   Account,
   ConnectionProgress,
+  DiscordPresenceStatus,
   Favorite,
   LauncherState,
   NewsItem,
@@ -94,6 +96,7 @@ export function App() {
   const [dragActive, setDragActive] = useState(false);
   const [accountLoginOpen, setAccountLoginOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeId>(storedTheme);
+  const [discordStatus, setDiscordStatus] = useState<DiscordPresenceStatus>("unavailable");
 
   useEffect(() => {
     const language = settings?.language?.toLowerCase();
@@ -107,7 +110,8 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
-    const unsubscribe = window.mados.onEvent((event) => handleWorkerEvent(event, setState, setConnection, setStartupError, setShellUpdate));
+    const unsubscribe = window.mados.onEvent((event) => handleWorkerEvent(event, setState, setSettings, setConnection, setStartupError, setShellUpdate));
+    const unsubscribeDiscord = window.mados.onDiscordStatus(({ status }) => setDiscordStatus(status));
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
     const onLauncherError = (event: Event) => setStartupError((event as CustomEvent<{ message: string }>).detail.message);
@@ -142,6 +146,7 @@ export function App() {
 
     return () => {
       unsubscribe();
+      unsubscribeDiscord();
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("launcher-error", onLauncherError);
@@ -181,7 +186,7 @@ export function App() {
             {tab === "servers" && <ServersView state={state} onStateChange={setState} />}
             {tab === "news" && <NewsView settings={settings} />}
             {tab === "playtime" && <PlaytimeView state={state} onNavigate={setTab} />}
-            {tab === "settings" && <SettingsView settings={settings} setSettings={setSettings} theme={theme} setTheme={setTheme} />}
+            {tab === "settings" && <SettingsView settings={settings} setSettings={setSettings} theme={theme} setTheme={setTheme} discordStatus={discordStatus} />}
           </div>
         </main>
       </div>
@@ -429,6 +434,10 @@ function formatFilterTag(tag: string): string {
   if (region) return filterRegionNames[region[1].toLowerCase()] ?? `Регион · ${region[1].toUpperCase()}`;
   const rolePlay = /^rp:(.+)$/i.exec(tag);
   if (rolePlay) return `RP · ${rolePlay[1] === "none" ? "нет" : rolePlay[1]}`;
+  const mode = /^mode:(.+)$/i.exec(tag);
+  if (mode) return `Режим · ${mode[1]}`;
+  const map = /^map:(.+)$/i.exec(tag);
+  if (map) return `Карта · ${map[1]}`;
   const eighteen = /^18\+:(true|false)$/i.exec(tag);
   if (eighteen) return eighteen[1].toLowerCase() === "true" ? "18+" : "Без 18+";
   if (/^18\+$/i.test(tag)) return "18+";
@@ -452,7 +461,13 @@ function ServerDetailsModal({ server, onClose, onConnect }: { server: Server; on
     });
     return () => { cancelled = true; };
   }, [server]);
-  return <div className="modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="server-details-modal" role="dialog" aria-modal="true" aria-labelledby="server-details-title"><div className="modal-header"><div><p className="eyebrow">Информация о сервере</p><h2 id="server-details-title">{server.name || "Без названия"}</h2></div><button className="icon-button" onClick={onClose} aria-label="Закрыть"><X size={18} /></button></div><div className="server-details-status"><span className={`server-status ${server.status === "online" ? "online" : "offline"}`} />{server.status === "online" ? "Онлайн" : "Недоступен"}<span>·</span><span>{server.playerCount}{server.softMaxPlayerCount > 0 ? ` / ${server.softMaxPlayerCount}` : ""} игроков</span><span>·</span><span>{server.pingMs == null ? "—" : `${server.pingMs} ms`}</span></div><p className="server-details-address">{server.address}</p>{loading ? <div className="details-loading"><LoaderCircle className="spin" size={20} /> Загружаем описание сервера…</div> : error ? <div className="details-error"><AlertTriangle size={17} /><span>{error}</span></div> : <div className="server-details-body"><p>{details?.description?.trim() || "Создатели сервера пока не добавили описание."}</p>{details?.links && details.links.length > 0 && <div className="server-link-list">{details.links.map((link) => <button className="text-link" key={link.url} onClick={() => void window.mados.openExternal(link.url)}>{link.name || link.url}<ExternalLink className="external-link" size={14} /></button>)}</div>}</div>}<div className="modal-actions"><button className="secondary-button" onClick={onClose}>Закрыть</button><button className="primary-button" disabled={server.status !== "online"} onClick={onConnect}><Play className="play-icon" size={16} fill="currentColor" /> Подключиться</button></div></section></div>;
+  const status = details?.status ?? server.status;
+  const playerCount = details?.playerCount ?? server.playerCount;
+  const softMaxPlayerCount = details?.softMaxPlayerCount ?? server.softMaxPlayerCount;
+  const pingMs = details?.pingMs ?? server.pingMs;
+  const map = details?.map ?? server.map;
+  const mode = details?.mode ?? server.mode;
+  return <div className="modal-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="server-details-modal" role="dialog" aria-modal="true" aria-labelledby="server-details-title"><div className="modal-header"><div><p className="eyebrow">Информация о сервере</p><h2 id="server-details-title">{server.name || "Без названия"}</h2></div><button className="icon-button" onClick={onClose} aria-label="Закрыть"><X size={18} /></button></div><div className="server-details-status"><span className={`server-status ${status === "online" ? "online" : "offline"}`} />{status === "online" ? "Онлайн" : "Недоступен"}<span>·</span><span>{playerCount ?? 0}{softMaxPlayerCount && softMaxPlayerCount > 0 ? ` / ${softMaxPlayerCount}` : ""} игроков</span><span>·</span><span>{pingMs == null ? "—" : `${pingMs} ms`}</span></div><p className="server-details-address">{server.address}</p><div className="server-details-meta"><div><span>Карта</span><strong>{map?.trim() || "Не указано"}</strong></div><div><span>Режим</span><strong>{mode?.trim() || "Не указано"}</strong></div><div><span>Онлайн</span><strong>{playerCount ?? "—"}{softMaxPlayerCount && softMaxPlayerCount > 0 ? ` / ${softMaxPlayerCount}` : ""}</strong></div><div><span>Ping</span><strong>{pingMs == null ? "—" : `${pingMs} ms`}</strong></div><div><span>Статус</span><strong>{status === "online" ? "Онлайн" : "Недоступен"}</strong></div></div>{loading ? <div className="details-loading"><LoaderCircle className="spin" size={20} /> Загружаем описание сервера…</div> : error ? <div className="details-error"><AlertTriangle size={17} /><span>{error}</span></div> : <div className="server-details-body"><p>{details?.description?.trim() || "Создатели сервера пока не добавили описание."}</p>{details?.links && details.links.length > 0 && <div className="server-link-list">{details.links.map((link) => <button className="text-link" key={link.url} onClick={() => void window.mados.openExternal(link.url)}>{link.name || link.url}<ExternalLink className="external-link" size={14} /></button>)}</div>}</div>}<div className="modal-actions"><button className="secondary-button" onClick={onClose}>Закрыть</button><button className="primary-button" disabled={server.status !== "online"} onClick={onConnect}><Play className="play-icon" size={16} fill="currentColor" /> Подключиться</button></div></section></div>;
 }
 
 function NewsView({ settings }: { settings: LauncherSettings | null }) {
@@ -569,24 +584,27 @@ function pluralize(value: number, one: string, few: string, many: string): strin
   return mod10 === 1 && mod100 !== 11 ? one : mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20) ? few : many;
 }
 
-function SettingsView({ settings, setSettings, theme, setTheme }: { settings: LauncherSettings | null; setSettings: (settings: LauncherSettings) => void; theme: ThemeId; setTheme: (theme: ThemeId) => void }) {
+function SettingsView({ settings, setSettings, theme, setTheme, discordStatus }: { settings: LauncherSettings | null; setSettings: (settings: LauncherSettings) => void; theme: ThemeId; setTheme: (theme: ThemeId) => void; discordStatus: DiscordPresenceStatus }) {
   const [saving, setSaving] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(() => localStorage.getItem("mados.reducedMotion") === "true");
-  const [section, setSection] = useState<"account" | "appearance" | "compatibility" | "diagnostics">("account");
+  const [section, setSection] = useState<"account" | "appearance" | "discord" | "compatibility" | "diagnostics">("account");
   if (!settings) return <LoadingScreen />;
   const update = async (patch: Partial<LauncherSettings>) => { setSaving(true); try { setSettings(await window.mados.invoke<LauncherSettings>("settings.update", patch)); } finally { setSaving(false); } };
   const navItems: Array<{ id: typeof section; label: string; icon: typeof UserRound }> = [
     { id: "account", label: "Аккаунт", icon: UserRound },
     { id: "appearance", label: "Внешний вид", icon: Sparkles },
+    { id: "discord", label: "Discord", icon: Radio },
     { id: "compatibility", label: "Совместимость", icon: ShieldCheck },
     { id: "diagnostics", label: "Диагностика", icon: TerminalSquare },
   ];
-  return <section className="page page-enter"><div className="page-heading"><div><p className="eyebrow">Персонализация</p><h1>Настройки</h1><p className="page-subtitle">Управляйте аккаунтом и поведением лаунчера.</p></div>{saving && <LoaderCircle className="spin muted-icon" size={19} />}</div><div className="settings-layout"><div className="settings-nav">{navItems.map(({ id, label, icon: Icon }) => <button key={id} className={`settings-nav-item ${section === id ? "active" : ""}`} onClick={() => setSection(id)}><Icon className="settings-nav-icon" size={16} /> {label}</button>)}</div><div className="settings-panels">{section === "account" && <SettingsGroup title="Аккаунт" icon={<UserRound size={18} />}><SettingRow title="Текущий аккаунт" description={"Активная сессия Mados Launcher"}><span className="setting-value"><span className="status-dot" />Активен</span></SettingRow><SettingRow title="Управление аккаунтом" description="Открыть настройки учётной записи на официальном сайте"><button className="secondary-button" onClick={() => void window.mados.openExternal(settings.accountManagementUrl)}>Открыть <ExternalLink className="external-link" size={14} /></button></SettingRow></SettingsGroup>}{section === "appearance" && <SettingsGroup title="Внешний вид" icon={<Sparkles size={18} />}><SettingRow title="Цветовая тема" description="Меняет только акцентные цвета интерфейса"><ThemePicker value={theme} onChange={setTheme} /></SettingRow><SettingRow title="Уменьшить движение" description="Отключить переходы и анимации интерфейса"><Toggle checked={reducedMotion} onChange={(checked) => { setReducedMotion(checked); localStorage.setItem("mados.reducedMotion", String(checked)); document.documentElement.classList.toggle("reduce-motion", checked); }} /></SettingRow><SettingRow title="Язык интерфейса" description="Русский и English доступны в текущей версии"><LanguageSelect value={settings.language ?? "auto"} onChange={(value) => void update({ language: value === "auto" ? null : value })} /></SettingRow></SettingsGroup>}{section === "compatibility" && <SettingsGroup title="Совместимость" icon={<ShieldCheck size={18} />}><SettingRow title="Compatibility mode" description="Использовать безопасные графические параметры"><Toggle checked={settings.compatMode} onChange={(checked) => void update({ compatMode: checked })} /></SettingRow><SettingRow title="Seasonal assets" description="Разрешить загрузку официальных override-ассетов"><Toggle checked={settings.overrideAssets} onChange={(checked) => void update({ overrideAssets: checked })} /></SettingRow></SettingsGroup>}{section === "diagnostics" && <SettingsGroup title="Диагностика" icon={<TerminalSquare size={18} />}><SettingRow title="Подробное логирование" description="Нужно для разбора сложных проблем запуска"><Toggle checked={settings.verboseLogging} onChange={(checked) => void update({ verboseLogging: checked })} /></SettingRow><SettingRow title="Версия" description="Mados Launcher"><span className="setting-value">{(window as Window & { __madosVersion?: string }).__madosVersion ?? "0.40.1"}</span></SettingRow></SettingsGroup>}</div></div></section>;
+  const discordLabel = discordStatus === "connected" ? "Discord подключён" : discordStatus === "disabled" ? "Rich Presence отключён" : "Discord не найден";
+  const discordTone = discordStatus === "connected" ? "success" : discordStatus === "disabled" ? "muted" : "warning";
+  return <section className="page page-enter"><div className="page-heading"><div><p className="eyebrow">Персонализация</p><h1>Настройки</h1><p className="page-subtitle">Управляйте аккаунтом и поведением лаунчера.</p></div>{saving && <LoaderCircle className="spin muted-icon" size={19} />}</div><div className="settings-layout"><div className="settings-nav">{navItems.map(({ id, label, icon: Icon }) => <button key={id} className={`settings-nav-item ${section === id ? "active" : ""}`} onClick={() => setSection(id)}><Icon className="settings-nav-icon" size={16} /> {label}</button>)}</div><div className="settings-panels">{section === "account" && <SettingsGroup title="Аккаунт" icon={<UserRound size={18} />}><SettingRow title="Текущий аккаунт" description={"Активная сессия Mados Launcher"}><span className="setting-value"><span className="status-dot" />Активен</span></SettingRow><SettingRow title="Управление аккаунтом" description="Открыть настройки учётной записи на официальном сайте"><button className="secondary-button" onClick={() => void window.mados.openExternal(settings.accountManagementUrl)}>Открыть <ExternalLink className="external-link" size={14} /></button></SettingRow></SettingsGroup>}{section === "appearance" && <SettingsGroup title="Внешний вид" icon={<Sparkles size={18} />}><SettingRow title="Цветовая тема" description="Меняет только акцентные цвета интерфейса"><ThemePicker value={theme} onChange={setTheme} /></SettingRow><SettingRow title="Уменьшить движение" description="Отключить переходы и анимации интерфейса"><Toggle checked={reducedMotion} onChange={(checked) => { setReducedMotion(checked); localStorage.setItem("mados.reducedMotion", String(checked)); document.documentElement.classList.toggle("reduce-motion", checked); }} /></SettingRow><SettingRow title="Язык интерфейса" description="Русский и English доступны в текущей версии"><LanguageSelect value={settings.language ?? "auto"} onChange={(value) => void update({ language: value === "auto" ? null : value })} /></SettingRow></SettingsGroup>}{section === "discord" && <SettingsGroup title="Discord" icon={<Radio size={18} />}><SettingRow title="Rich Presence" description="Показывать состояние Mados Launcher и игры в Discord"><Toggle checked={settings.discordPresenceEnabled} onChange={(checked) => void update({ discordPresenceEnabled: checked })} /></SettingRow><SettingRow title="Показывать ник в Discord" description="Ник фиксируется в момент запуска соединения и не передаёт токены"><Toggle checked={settings.discordPresenceShowNickname} disabled={!settings.discordPresenceEnabled} onChange={(checked) => void update({ discordPresenceShowNickname: checked })} /></SettingRow><SettingRow title="Состояние Discord" description="Лаунчер продолжает работать, если Discord закрыт"><span className={`setting-value discord-status-value ${discordTone}`}><span className="status-dot" />{discordLabel}</span></SettingRow><SettingRow title="Картинка активности" description="Загрузите asset с ключом mados-cat в Discord Developer Portal"><button className="secondary-button" onClick={() => void window.mados.openExternal("https://discord.com/developers/applications/1555589477492199434/rich-presence/assets")}>Открыть инструкцию <ExternalLink className="external-link" size={14} /></button></SettingRow></SettingsGroup>}{section === "compatibility" && <SettingsGroup title="Совместимость" icon={<ShieldCheck size={18} />}><SettingRow title="Compatibility mode" description="Использовать безопасные графические параметры"><Toggle checked={settings.compatMode} onChange={(checked) => void update({ compatMode: checked })} /></SettingRow><SettingRow title="Seasonal assets" description="Разрешить загрузку официальных override-ассетов"><Toggle checked={settings.overrideAssets} onChange={(checked) => void update({ overrideAssets: checked })} /></SettingRow></SettingsGroup>}{section === "diagnostics" && <SettingsGroup title="Диагностика" icon={<TerminalSquare size={18} />}><SettingRow title="Подробное логирование" description="Нужно для разбора сложных проблем запуска"><Toggle checked={settings.verboseLogging} onChange={(checked) => void update({ verboseLogging: checked })} /></SettingRow><SettingRow title="Версия" description="Mados Launcher"><span className="setting-value">{(window as Window & { __madosVersion?: string }).__madosVersion ?? "0.40.1"}</span></SettingRow></SettingsGroup>}</div></div></section>;
 }
 
 function SettingsGroup({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) { return <section className="settings-group"><div className="settings-group-title"><span className="settings-group-icon">{icon}</span><h2>{title}</h2></div><div className="settings-rows">{children}</div></section>; }
 function SettingRow({ title, description, children }: { title: string; description: string; children: ReactNode }) { return <div className="setting-row"><div><strong>{title}</strong><p>{description}</p></div>{children}</div>; }
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (checked: boolean) => void }) { return <button className={`toggle ${checked ? "checked" : ""}`} role="switch" aria-checked={checked} onClick={() => onChange(!checked)}><span /></button>; }
+function Toggle({ checked, onChange, disabled = false }: { checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) { return <button className={`toggle ${checked ? "checked" : ""}`} role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)}><span /></button>; }
 
 function ThemePicker({ value, onChange }: { value: ThemeId; onChange: (theme: ThemeId) => void }) {
   return <div className="theme-picker" role="radiogroup" aria-label="Цветовая тема">{themeOptions.map((option) => <button type="button" key={option.id} className={`theme-option ${value === option.id ? "selected" : ""}`} aria-checked={value === option.id} role="radio" title={option.label} onClick={() => onChange(option.id)}><span className="theme-swatch" style={{ background: option.swatch } as CSSProperties} /><span>{option.label}</span></button>)}</div>;
@@ -670,9 +688,13 @@ function FatalError({ message, onRetry }: { message: string; onRetry: () => void
 function LoadingScreen() { return <div className="loading-screen"><CatMark large /><LoaderCircle size={22} className="spin" /><span>Запуск Mados Launcher…</span></div>; }
 async function openContentBundle() { const path = await window.mados.pickContentBundle(); if (path) await window.mados.invoke("content.openBundle", { path }); }
 
-function handleWorkerEvent(event: WorkerEvent, setState: Dispatch<SetStateAction<LauncherState | null>>, setConnection: Dispatch<SetStateAction<ConnectionProgress | null>>, setStartupError: Dispatch<SetStateAction<string | null>>, setShellUpdate: Dispatch<SetStateAction<ShellUpdate>>) {
+function handleWorkerEvent(event: WorkerEvent, setState: Dispatch<SetStateAction<LauncherState | null>>, setSettings: Dispatch<SetStateAction<LauncherSettings | null>>, setConnection: Dispatch<SetStateAction<ConnectionProgress | null>>, setStartupError: Dispatch<SetStateAction<string | null>>, setShellUpdate: Dispatch<SetStateAction<ShellUpdate>>) {
   if (event.event === "app.ready") setState(event.data as LauncherState);
   if (event.event === "auth.changed") { const data = event.data as { accounts: Account[]; activeAccount: Account | null }; setState((current) => ({ ...(current as LauncherState), accounts: data.accounts, activeAccount: data.activeAccount, loggedIn: data.activeAccount != null })); }
+  if (event.event === "settings.changed") {
+    const data = event.data as { discord?: { enabled: boolean; showNickname: boolean } };
+    if (data.discord) setSettings((current) => current ? { ...current, discordPresenceEnabled: data.discord!.enabled, discordPresenceShowNickname: data.discord!.showNickname } : current);
+  }
   if (event.event === "connection.progress") setConnection(event.data as ConnectionProgress);
   if (event.event === "connection.completed") setConnection(null);
   if (event.event === "connection.failed") {

@@ -26,6 +26,12 @@ npm run dist
 
 `prepare-worker` публикует self-contained worker с RID текущей машины в `staging/worker/<rid>`, поэтому упакованный launcher не требует установленного .NET runtime. CI должен запускать этот шаг на каждом runner для `win-x64`, `win-arm64`, `osx-x64`, `osx-arm64`, `linux-x64` и `linux-arm64`. Доступны NSIS + ZIP для Windows, DMG + ZIP для macOS и AppImage + ZIP для Linux. При отсутствии CI secrets артефакт остаётся unsigned и сборка не блокируется.
 
+## Discord Rich Presence
+
+Rich Presence работает через Discord IPC в Electron main process и использует приложение `1555589477492199434`. Renderer не получает Discord API. В настройках можно отключить Presence или скрыть ник; при закрытом Discord лаунчер продолжает работать без ошибки. Для большой картинки в Discord Developer Portal загрузите asset с ключом `mados-cat` — без него текстовая активность всё равно отображается.
+
+Во время выбора сервера показывается состояние лаунчера. После `ClientRunning` worker каждые 30 секунд обновляет отдельный status/ping конкретного сервера и передаёт main только структурированное событие `presence.updated`. Карта и режим берутся исключительно из тегов `map:` и `mode:`; неизвестные значения отображаются как `Не указано`. Deep link адрес перед отправкой очищается от query, fragment и userinfo.
+
 Для cross-build в CI можно явно указать RID (`$env:MADOS_WORKER_RID = "win-arm64"`, затем `npm run prepare-worker`) и передать electron-builder нужную архитектуру (`electron-builder --win --arm64`, `--mac --arm64`, `--linux --arm64`).
 
 Матрица релизов выполняет в чистом checkout:

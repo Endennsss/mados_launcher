@@ -104,6 +104,18 @@ public static class CVars
     public static readonly CVarDef<bool> OverrideAssets = CVarDef.Create("OverrideAssets", true);
 
     /// <summary>
+    /// Enables Discord Rich Presence from the Electron shell. This is a local
+    /// launcher preference and does not affect authentication or game data.
+    /// </summary>
+    public static readonly CVarDef<bool> DiscordPresenceEnabled = CVarDef.Create("DiscordPresenceEnabled", true);
+
+    /// <summary>
+    /// Controls whether the active account nickname is included in Discord
+    /// Rich Presence.
+    /// </summary>
+    public static readonly CVarDef<bool> DiscordPresenceShowNickname = CVarDef.Create("DiscordPresenceShowNickname", true);
+
+    /// <summary>
     /// Stores the minimum player count value used by the "minimum player count" filter.
     /// </summary>
     /// <seealso cref="ServerFilter.PlayerCountMin"/>

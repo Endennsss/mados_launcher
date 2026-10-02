@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import type { LauncherApi, WorkerEvent } from "../contracts/launcher";
+import type { DiscordPresenceStatus, LauncherApi, WorkerEvent } from "../contracts/launcher";
 
 const api: LauncherApi = {
   invoke<T = unknown>(method: string, params?: unknown): Promise<T> {
@@ -9,6 +9,11 @@ const api: LauncherApi = {
     const handler = (_event: Electron.IpcRendererEvent, value: WorkerEvent) => listener(value);
     ipcRenderer.on("worker-event", handler);
     return () => ipcRenderer.removeListener("worker-event", handler);
+  },
+  onDiscordStatus(listener: (status: { status: DiscordPresenceStatus }) => void): () => void {
+    const handler = (_event: Electron.IpcRendererEvent, value: { status: DiscordPresenceStatus }) => listener(value);
+    ipcRenderer.on("discord-status", handler);
+    return () => ipcRenderer.removeListener("discord-status", handler);
   },
   minimize: () => ipcRenderer.send("window-minimize"),
   toggleMaximize: () => ipcRenderer.send("window-toggle-maximize"),

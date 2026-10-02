@@ -4,7 +4,7 @@
 |---|---|---|---|---|---|---|
 | Авторизация и 2FA | `AuthApi`, `LoginManager`, SQLite `Login` | `auth.login` | busy форма, код `TFA_REQUIRED`, сетевые ошибки | токен хранится только в C# и приходит DTO аккаунта | onboarding | войти с паролем и 2FA |
 | Несколько аккаунтов | `DataManager`, `LoginManager` | `auth.getAccounts`, `auth.switchAccount`, `auth.logout` | expired/unsure отображаются отдельно | выбранный аккаунт и `SelectedLogin` сохранены | account popover | добавить второй аккаунт, переключить, выйти |
-| Сервера | `HubApi`, `ServerListCache`, `ServerPingProbe`, реальные hub URLs | `servers.list`, `servers.refresh` | skeleton, partial hub error, offline banner | карточки с online/players/tags и отдельным HTTP ping каждого сервера | Servers | обновить список при рабочем и отключённом hub |
+| Сервера и описание | `HubApi`, `ServerListCache`, `ServerPingProbe`, `ServerStatusProbe`, реальные hub URLs | `servers.list`, `servers.refresh`, `servers.info` | skeleton, partial hub error, offline banner, detail retry | карточки с online/players/tags, отдельный ping каждого сервера и modal с описанием, картой, режимом, online и ping | Servers/Home/Favorites | открыть карточку из каталога, избранного и последнего сервера |
 | Поиск, сортировка, фильтры | hub `StatusData.Tags` + сохранённые UI-фильтры | `servers.list` | debounce 180 мс, empty state | карточки фильтруются локально и настройки сохраняются | Servers | поиск, chips, «только с игроками», перезапуск |
 | Избранное | `DataManager.FavoriteServers` | `favorites.list/add/remove` | duplicate/not-found структурированная ошибка | SQLite favourite обновлён | Home/Servers | добавить, удалить, перезапустить |
 | Прямое подключение | `Connector` | `servers.connect` | проверка `ss14://`/`ss14s://`, `CONNECTION_BUSY` | реальный update/launch flow | Servers | вставить URI и подключиться |
@@ -14,6 +14,7 @@
 | Время игры | `PlaytimeTracker`, `PlaytimeStore`, локальный `playtime.db` | `playtime.getSummary`, `playtime.clear`, `playtime.updated` | skeleton, структурированная ошибка, подтверждение удаления | учёт `ClientRunning`–`ClientExited`, heartbeat 15 с, восстановление после перезапуска, периоды all/today/7d | Время игры | войти, запустить обычный сервер, проверить live-счётчик, закрыть клиент, сменить аккаунт и очистить историю |
 | Новости | `CodeHollow.FeedReader` + GitHub Releases API `ConfigConstants.MadosLauncherGitHubRepository` | `news.list` | skeleton, retry, частичная ошибка одного источника | cards с источником, датой, кратким описанием и safe external link | News | открыть официальную статью и GitHub release, повторить после offline |
 | Настройки | C# CVars и `LocalizationManager` | `settings.get/update` | saving indicator | compat, assets, language, verbose logging сохранены | Settings | изменить каждый toggle и перезапустить |
+| Discord Rich Presence | локальные CVars + `DiscordPresenceService` и Discord IPC | `presence.updated`, `settings.changed` | Discord отсутствует — статус `unavailable`, worker и UI продолжают работу | меню/подключение/игра с сервером, картой, режимом, online, ping и опциональным ником; токены очищаются worker-границей | Settings/Discord + Discord client | закрыть Discord, подключиться к серверу, дождаться ClientRunning, проверить возврат к меню и настройку ника |
 | Deep links | Electron single-instance + `WorkerHost` | `app.openDeepLink`, `deepLink.received` | invalid/unsupported URI | первый процесс получает URI, второй закрывается | connection banner | запуск `Mados Launcher.exe ss14://...` дважды |
 | Loader commands | `WorkerCommandBridge`, старое имя pipe | pipe `SS14.Launcher.CommandPipe*` | malformed hex логируется без секрета | `c/C` команда стартует Connect | connection banner | отправить legacy `c` и encoded `C` |
 | Shell update | `electron-updater` | `shell.update*` renderer events | error banner, no auto-download | download + restart after verified update | global banner | packaged build с release feed |
@@ -36,6 +37,8 @@ flowchart LR
   W --> D[DataManager + SQLite]
   W --> C[Connector/Updater/ContentManager]
   W --> P[PlaytimeTracker/PlaytimeStore\nlocal playtime.db]
+  W --> Q[ServerStatusProbe\nmap/mode/ping snapshots]
   W --> L[Loader named-pipe bridge]
   M --> S[Migration + single instance + ss14://]
+  M --> D[DiscordPresenceService\nDiscord IPC, reconnect/backoff]
 ```

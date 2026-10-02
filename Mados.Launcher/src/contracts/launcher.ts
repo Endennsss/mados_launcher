@@ -10,6 +10,25 @@ export type WorkerEvent = {
   data: unknown;
 };
 
+export type PresenceState = "launcher" | "connecting" | "updating" | "playing";
+
+export type PresenceSnapshot = {
+  state: PresenceState;
+  enabled: boolean;
+  showNickname: boolean;
+  accountName: string | null;
+  serverName: string | null;
+  address: string | null;
+  playerCount: number | null;
+  softMaxPlayerCount: number | null;
+  pingMs: number | null;
+  map: string | null;
+  mode: string | null;
+  startedAt: string | null;
+};
+
+export type DiscordPresenceStatus = "connected" | "unavailable" | "disabled";
+
 export type WorkerResponse<T = unknown> = {
   v: 1;
   id: string;
@@ -43,11 +62,18 @@ export type Server = {
   pingMs?: number | null;
   language?: string | null;
   map?: string | null;
+  mode?: string | null;
 };
 
 export type ServerDetails = {
   description?: string | null;
   links?: Array<{ name: string; icon?: string | null; url: string }>;
+  status?: "online" | "offline" | string;
+  playerCount?: number | null;
+  softMaxPlayerCount?: number | null;
+  pingMs?: number | null;
+  map?: string | null;
+  mode?: string | null;
 };
 
 export type LauncherState = {
@@ -57,6 +83,10 @@ export type LauncherState = {
   accounts: Account[];
   favorites: Favorite[];
   version: string;
+  discord?: {
+    enabled: boolean;
+    showNickname: boolean;
+  };
   compatibility?: {
     outOfDate: boolean;
     earlyAccess: boolean;
@@ -82,6 +112,8 @@ export type Settings = {
   registerUrl: string;
   discordUrl: string;
   websiteUrl: string;
+  discordPresenceEnabled: boolean;
+  discordPresenceShowNickname: boolean;
 };
 
 export type NewsItem = {
@@ -127,6 +159,7 @@ export type PlaytimeSummary = {
 export type LauncherApi = {
   invoke<T = unknown>(method: string, params?: unknown): Promise<T>;
   onEvent(listener: (event: WorkerEvent) => void): () => void;
+  onDiscordStatus(listener: (status: { status: DiscordPresenceStatus }) => void): () => void;
   minimize(): void;
   toggleMaximize(): void;
   close(): void;

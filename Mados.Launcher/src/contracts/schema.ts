@@ -56,3 +56,18 @@ export const workerEventSchema = z.object({
   event: z.string(),
   data: z.unknown(),
 });
+
+export const presenceSnapshotSchema = z.object({
+  state: z.enum(["launcher", "connecting", "updating", "playing"]),
+  enabled: z.boolean().default(true),
+  showNickname: z.boolean().default(true),
+  accountName: z.string().nullable().optional().transform((value) => value ?? null),
+  serverName: z.string().nullable().optional().transform((value) => value ?? null),
+  address: z.string().nullable().optional().transform((value) => value ?? null),
+  playerCount: z.number().int().nullable().optional().transform((value) => value ?? null),
+  softMaxPlayerCount: z.number().int().nullable().optional().transform((value) => value ?? null),
+  pingMs: z.number().nullable().optional().transform((value) => value ?? null),
+  map: z.string().nullable().optional().transform((value) => value ?? null),
+  mode: z.string().nullable().optional().transform((value) => value ?? null),
+  startedAt: z.string().nullable().optional().transform((value) => value ?? null),
+});
