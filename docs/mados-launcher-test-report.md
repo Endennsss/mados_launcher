@@ -8,7 +8,7 @@
 - `dotnet test SS14.Launcher.sln --configuration Debug --no-restore` — 19/19 тестов.
 - `npm run typecheck` — успешно.
 - `npm run build` — успешно, renderer собирается с относительными `file://` asset-ссылками.
-- `npm test` — 8/8 contract/presence-тестов.
+- `npm test` — 9/9 contract/presence-тестов.
 - `npm run lint` — успешно.
 - `npm run prepare-worker` — успешно для `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`; publish self-contained.
 - `electron-builder --win --x64` — успешно: NSIS и ZIP, локально unsigned.
