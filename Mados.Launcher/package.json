@@ -1,0 +1,97 @@
+{
+  "name": "mados-launcher",
+  "version": "0.40.1",
+  "description": "Mados Launcher for Space Station 14",
+  "author": "Mados Launcher contributors",
+  "main": "dist/main/main.js",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k \"vite --config vite.config.ts\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 node node_modules/electron/cli.js .\"",
+    "build": "npm run build:main && vite build --config vite.config.ts",
+    "prepare-worker": "node tools/prepare-worker.mjs",
+    "build:main": "tsc -p tsconfig.main.json",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "lint": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "dist": "npm run build && npm run prepare-worker && electron-builder",
+    "start": "node node_modules/electron/cli.js ."
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron-updater": "^6.3.9",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.mados.launcher",
+    "productName": "Mados Launcher",
+    "asar": true,
+    "files": [
+      "dist/main/**/*",
+      "dist/preload/**/*",
+      "dist/contracts/**/*.js",
+      "dist/renderer/**/*",
+      "package.json"
+    ],
+    "icon": "src/renderer/assets/cat-logo.png",
+    "extraResources": [
+      {
+        "from": "staging/worker",
+        "to": "worker",
+        "filter": ["**/*"]
+      }
+    ],
+    "protocols": [
+      {
+        "name": "Space Station 14 connection",
+        "schemes": ["ss14", "ss14s"]
+      }
+    ],
+    "win": {
+      "icon": "src/renderer/assets/cat-logo.ico",
+      "signAndEditExecutable": false,
+      "target": ["nsis", "zip"],
+      "artifactName": "Mados.Launcher.Windows.${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "icon": "src/renderer/assets/cat-logo.icns",
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.games",
+      "artifactName": "Mados.Launcher.macOS.${arch}.${ext}"
+    },
+    "linux": {
+      "icon": "src/renderer/assets/icons",
+      "target": ["AppImage", "zip"],
+      "category": "Game",
+      "artifactName": "Mados.Launcher.Linux.${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Endennsss",
+      "repo": "mados_launcher",
+      "releaseType": "release"
+    }
+  }
+}

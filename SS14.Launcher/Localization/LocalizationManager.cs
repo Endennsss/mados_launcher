@@ -1,11 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
-using Avalonia.Platform;
 using Linguini.Bundle;
 using Linguini.Bundle.Builder;
 using Linguini.Shared.Types.Bundle;
@@ -137,25 +136,20 @@ public sealed class LocalizationManager
             AddLanguageFiles(bundle, culture.Parent);
 
         var count = 0;
-        string[] attemptNames = [$"avares://SS14.Launcher/Assets/Locale/{culture.Name}"];
-        // Weblate stores secondary language codes (like zh-Hans) with an UNDERSCORE.
-        // WHY.
-        if (culture.Name.Contains('-'))
-            attemptNames = [..attemptNames, $"avares://SS14.Launcher/Assets/Locale/{culture.Name.Replace("-", "_")}"];
-
-        foreach (var location in attemptNames)
+        var assembly = typeof(LocalizationManager).Assembly;
+        string[] cultures = [culture.Name, culture.Name.Replace("-", "_")];
+        foreach (var name in cultures.Distinct())
         {
-            foreach (var ftl in AssetLoader.GetAssets(new Uri(location), null))
+            var prefix = $"SS14.Launcher.Assets.Locale.{name}.";
+            foreach (var ftl in assembly.GetManifestResourceNames().Where(n => n.StartsWith(prefix) && n.EndsWith(".ftl")))
             {
-                using var asset = AssetLoader.Open(ftl);
+                using var asset = assembly.GetManifestResourceStream(ftl)!;
                 using var reader = new StreamReader(asset, Encoding.UTF8);
                 var resource = new LinguiniParser(reader).Parse();
                 foreach (var resourceError in resource.Errors)
-                {
                     Log.Error("Error in loc {LocFile}: {Error}", ftl, resourceError);
-                }
                 bundle.AddResourceOverriding(resource);
-                count += 1;
+                count++;
             }
         }
 

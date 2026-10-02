@@ -22,8 +22,9 @@ public static class LauncherPaths
     public static readonly string DirLauncherInstall = GetInstallDir();
     public static readonly string DirUserData = GetUserDataDir();
     public static readonly string DirLocalData = GetLocalUserDataDir();
-    public static readonly string DirEngineInstallations = Path.Combine(DirUserData, EngineInstallationsDirName);
-    public static readonly string DirModuleInstallations = Path.Combine(DirUserData, EngineModulesDirName);
+    private static readonly string CacheUserDir = Environment.GetEnvironmentVariable("MADOS_CACHE_USER_DIR") ?? DirUserData;
+    public static readonly string DirEngineInstallations = Path.Combine(CacheUserDir, EngineInstallationsDirName);
+    public static readonly string DirModuleInstallations = Path.Combine(CacheUserDir, EngineModulesDirName);
     // Legacy server content directory. No longer used except to delete on launch.
     public static readonly string DirServerContent = Path.Combine(DirUserData, ServerContentDirName);
     public static readonly string DirLogs = Path.Combine(DirUserData, LogsDirName);
@@ -52,6 +53,8 @@ public static class LauncherPaths
 
     private static string GetUserDataDir()
     {
+        if (Environment.GetEnvironmentVariable("MADOS_DATA_DIR") is { Length: > 0 } overridden)
+            return Path.GetFullPath(overridden);
         string appDataDir;
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
@@ -82,6 +85,8 @@ public static class LauncherPaths
 
     private static string GetLocalUserDataDir()
     {
+        if (Environment.GetEnvironmentVariable("MADOS_CACHE_LOCAL_DIR") is { Length: > 0 } overridden)
+            return Path.GetFullPath(overridden);
         if (OperatingSystem.IsWindows())
         {
             var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);

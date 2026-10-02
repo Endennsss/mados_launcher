@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Mados Launcher — быстрый и спокойный лаунчер Space Station 14.">
+  <title>Mados Launcher</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#top"><span class="brand-mark">M</span><span>Mados Launcher</span></a>
+    <nav aria-label="Навигация"><a href="#features">Возможности</a><a href="#news">Новости</a><a class="nav-button" href="https://github.com/Endennsss/mados_launcher/releases/latest">Скачать</a></nav>
+  </header>
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy"><p class="eyebrow">Space Station 14</p><h1>Запускайте смену<br><span>без лишнего шума.</span></h1><p class="lead">Mados Launcher объединяет серверы, аккаунты, обновления и игровую статистику в одном аккуратном окне.</p><div class="hero-actions"><a class="button primary" href="https://github.com/Endennsss/mados_launcher/releases/latest">Скачать последнюю версию</a><a class="button secondary" href="https://github.com/Endennsss/mados_launcher">Открыть GitHub</a></div></div>
+      <div class="hero-card"><div class="hero-orb"></div><div class="mini-window"><div class="mini-window-bar"><span></span><span></span><span></span></div><div class="mini-content"><div class="mini-sidebar"><b>M</b><i></i><i></i><i></i></div><div class="mini-main"><small>ВРЕМЯ ИГРЫ</small><strong>12 ч 48 мин</strong><div class="mini-line"></div><div class="mini-cards"><i></i><i></i><i></i></div></div></div></div></div>
+    </section>
+    <section id="features" class="section"><div class="section-heading"><p class="eyebrow">Всё необходимое</p><h2>Лаунчер, который помнит контекст</h2></div><div class="feature-grid"><article><b>Серверы</b><p>Поиск, фильтры, ping, избранное и подробное описание перед подключением.</p></article><article><b>Аккаунты</b><p>Несколько аккаунтов с быстрым переключением и отдельными данными.</p></article><article><b>Время игры</b><p>Реальная статистика по серверам с live-счётчиком и периодами.</p></article><article><b>Обновления</b><p>Игровой контент и оболочка обновляются понятными последовательными шагами.</p></article></div></section>
+    <section id="news" class="section news-section"><div class="section-heading"><p class="eyebrow">Из GitHub</p><h2>Последние новости Mados</h2><a href="https://github.com/Endennsss/mados_launcher/releases">Все релизы →</a></div><div id="release-list" class="release-list"><p class="muted">Загружаем релизы…</p></div></section>
+  </main>
+  <footer><span>© Mados Launcher</span><a href="https://github.com/Endennsss/mados_launcher">Исходный код</a></footer>
+  <script>
+    const list = document.querySelector('#release-list');
+    const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[character]);
+    fetch('https://api.github.com/repos/Endennsss/mados_launcher/releases?per_page=3', { headers: { Accept: 'application/vnd.github+json' } })
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('GitHub unavailable')))
+      .then(releases => {
+        list.innerHTML = releases.length ? releases.map(release => `<a class="release" href="${escapeHtml(release.html_url)}"><span>${new Date(release.published_at || release.created_at).toLocaleDateString('ru-RU')}</span><strong>${escapeHtml(release.name || release.tag_name)}</strong><em>Открыть релиз →</em></a>`).join('') : '<p class="muted">Релизы появятся здесь после первой публикации.</p>';
+      })
+      .catch(() => { list.innerHTML = '<p class="muted">Новости GitHub временно недоступны. Откройте страницу релизов вручную.</p>'; });
+  </script>
+</body>
+</html>

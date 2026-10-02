@@ -11,3 +11,12 @@ SS14.Launcher/FodyWeavers.xsd
 
 !PublishFiles/Space Station 14 Launcher.app/Contents/Resources/bin/
 __pycache__
+.smoke-mados-data/
+.smoke-mados-data-*/
+.mados-worker-smoke-stderr.log
+worker-stderr.log
+Mados.Launcher/staging/
+artifacts/
+.smoke-mados-packaged*/
+.smoke-mados-worker-*/
+.smoke-mados-*/

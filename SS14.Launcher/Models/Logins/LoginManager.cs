@@ -1,7 +1,7 @@
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Threading;
 using DynamicData;
 using Microsoft.Toolkit.Mvvm.ComponentModel;
 using Serilog;
@@ -24,7 +24,8 @@ public sealed class LoginManager : ObservableObject
     private readonly DataManager _cfg;
     private readonly AuthApi _authApi;
 
-    private IDisposable? _timer;
+    private CancellationTokenSource? _refreshCancellation;
+    private Task? _refreshTask;
 
     private Guid? _activeLoginId;
 
@@ -90,21 +91,37 @@ public sealed class LoginManager : ObservableObject
 
     public async Task Initialize()
     {
-        // Set up timer so that if the user leaves their launcher open for a month or something
-        // their tokens don't expire.
-        _timer = DispatcherTimer.Run(() =>
-        {
-            async void Impl()
-            {
-                await RefreshAllTokens();
-            }
-
-            Impl();
-            return true;
-        }, ConfigConstants.TokenRefreshInterval, DispatcherPriority.Background);
+        // Keep token refresh independent from the UI framework. This is shared by
+        // Avalonia compatibility mode and the Electron worker.
+        _refreshCancellation?.Cancel();
+        _refreshCancellation = new CancellationTokenSource();
+        _refreshTask = RefreshLoopAsync(_refreshCancellation.Token);
 
         // Refresh all tokens we got.
         await RefreshAllTokens();
+    }
+
+    public void Stop()
+    {
+        _refreshCancellation?.Cancel();
+        _refreshCancellation = null;
+        _refreshTask = null;
+    }
+
+    private async Task RefreshLoopAsync(CancellationToken cancel)
+    {
+        using var timer = new PeriodicTimer(ConfigConstants.TokenRefreshInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancel))
+            {
+                await RefreshAllTokens();
+            }
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested)
+        {
+            // Normal shutdown.
+        }
     }
 
     private async Task RefreshAllTokens()

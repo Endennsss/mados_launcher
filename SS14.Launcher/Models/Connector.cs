@@ -12,7 +12,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Platform.Storage;
 using DynamicData;
 using Microsoft.Toolkit.Mvvm.ComponentModel;
 using Serilog;
@@ -44,7 +43,12 @@ public partial class Connector : ObservableObject
     [ObservableProperty] private bool _privacyPolicyDifferentVersion;
     public ServerPrivacyPolicyInfo? PrivacyPolicyInfo { get; private set; }
 
-    public async void Connect(string address, CancellationToken cancel = default)
+    public void Connect(string address, CancellationToken cancel = default)
+    {
+        _ = ConnectAsync(address, cancel);
+    }
+
+    public async Task ConnectAsync(string address, CancellationToken cancel = default)
     {
         try
         {
@@ -66,13 +70,16 @@ public partial class Connector : ObservableObject
         }
     }
 
-    public async void LaunchContentBundle(IStorageFile file, CancellationToken cancel = default)
+    public async Task LaunchContentBundlePathAsync(string path, CancellationToken cancel = default)
     {
-        Log.Information("Launching content bundle: {FileName}", file.Path);
+        Log.Information("Launching content bundle: {FileName}", path);
 
         try
         {
-            await LaunchContentBundleInternal(file, cancel);
+            await LaunchContentBundleInternal(
+                () => Task.FromResult<Stream>(File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read)),
+                path,
+                cancel);
         }
         catch (ConnectException e)
         {
@@ -185,12 +192,15 @@ public partial class Connector : ObservableObject
         PrivacyPolicyDifferentVersion = default;
     }
 
-    private async Task LaunchContentBundleInternal(IStorageFile file, CancellationToken cancel)
+    private async Task LaunchContentBundleInternal(
+        Func<Task<Stream>> openStream,
+        string? localPath,
+        CancellationToken cancel)
     {
         Status = ConnectionStatus.Updating;
 
         ContentLaunchInfo installation;
-        await using (var zipStream = await file.OpenReadAsync())
+        await using (var zipStream = await openStream())
         {
             var zipHash = await Task.Run(() => Updater.HashFileSha256(zipStream), cancel);
 
@@ -247,7 +257,7 @@ public partial class Connector : ObservableObject
             //
             if (zipFile.GetEntry("manifest.yml") is null
                 && metadata.BaseBuild is not null
-                && file.TryGetLocalPath() is { } localPath)
+                && localPath is not null)
             {
                 installation = await RunUpdateAsync(metadata.GetBaseBuildInformation(), cancel);
                 installation = installation with { OverlayZip = localPath };

@@ -1,0 +1,41 @@
+name: Bug report
+description: Сообщить о воспроизводимой проблеме Mados Launcher
+title: "fix: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Заполните поля ниже и приложите launcher log без токенов и паролей.
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Как воспроизвести
+      description: Шаги от чистого запуска до ошибки.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемый результат
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактический результат
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Версия и платформа
+      placeholder: "0.40.1, Windows x64"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи и screenshots
+      description: Удалите токены, пароли, URI с секретами и персональные пути.

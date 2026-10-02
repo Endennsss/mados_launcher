@@ -11,7 +11,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+#if !MADOS_WORKER
 using Avalonia.Threading;
+#endif
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Microsoft.Toolkit.Mvvm.ComponentModel;
@@ -839,7 +841,11 @@ public sealed partial class Updater : ObservableObject
 
     private void DownloadProgressCallback(long downloaded, long total)
     {
+#if MADOS_WORKER
+        Progress = (downloaded, total, ProgressUnit.Bytes);
+#else
         Dispatcher.UIThread.Post(() => Progress = (downloaded, total, ProgressUnit.Bytes));
+#endif
     }
 
     internal static byte[] HashFileSha256(Stream stream)

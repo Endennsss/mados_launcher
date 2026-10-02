@@ -39,6 +39,9 @@ public static class ConfigConstants
     public const string WebsiteUrl = "https://spacestation14.com";
     public const string DownloadUrl = "https://spacestation14.com/about/nightlies/";
     public const string NewsFeedUrl = "https://spacestation14.com/post/index.xml";
+    public const string MadosLauncherGitHubRepository = "Endennsss/mados_launcher";
+    public const string MadosLauncherGitHubUrl = "https://github.com/Endennsss/mados_launcher";
+    public const string MadosLauncherGitHubReleasesApi = "https://api.github.com/repos/Endennsss/mados_launcher/releases?per_page=8";
     public const string TranslateUrl = "https://docs.spacestation14.com/en/general-development/contributing-translations.html";
     public static bool IsAuthOverride;
 

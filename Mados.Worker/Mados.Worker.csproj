@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../Launcher.props" />
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>SS14.Launcher</RootNamespace>
+    <AssemblyName>Mados.Worker</AssemblyName>
+    <DefineConstants>MADOS_WORKER;$(DefineConstants)</DefineConstants>
+    <DefineConstants Condition="'$(FullRelease)' == 'True'">FULL_RELEASE;$(DefineConstants)</DefineConstants>
+    <NoWarn>CA1416</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../SS14.Launcher/Models/**/*.cs" Exclude="../SS14.Launcher/Models/Connector.Avalonia.cs" Link="Models/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SS14.Launcher/Api/**/*.cs" Link="Api/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SS14.Launcher/Utility/**/*.cs" Exclude="../SS14.Launcher/Utility/AlwaysHitTest.cs;../SS14.Launcher/Utility/ButtonExtensions.cs" Link="Utility/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../SS14.Launcher/Localization/LocalizationManager.cs" Link="Localization/LocalizationManager.cs" />
+    <Compile Include="../SS14.Launcher/ConfigConstants.cs" Link="ConfigConstants.cs" />
+    <Compile Include="../SS14.Launcher/Global.cs" Link="Global.cs" />
+    <Compile Include="../SS14.Launcher/Helpers.cs" Link="Helpers.cs" />
+    <Compile Include="../SS14.Launcher/HappyEyeballsHttp.cs" Link="HappyEyeballsHttp.cs" />
+    <Compile Include="../SS14.Launcher/HttpSelfTest.cs" Link="HttpSelfTest.cs" />
+    <Compile Include="../SS14.Launcher/LauncherPaths.cs" Link="LauncherPaths.cs" />
+    <Compile Include="../SS14.Launcher/LauncherDiagnostics.cs" Link="LauncherDiagnostics.cs" />
+    <Compile Include="../SS14.Launcher/LauncherVersion.cs" Link="LauncherVersion.cs" />
+    <Compile Include="../SS14.Launcher/UriHelper.cs" Link="UriHelper.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="CodeHollow.FeedReader" />
+    <PackageReference Include="Dapper" />
+    <PackageReference Include="DynamicData" />
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" />
+    <PackageReference Include="Splat" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
+    <PackageReference Include="Microsoft.Toolkit.Mvvm" />
+    <PackageReference Include="Robust.Shared.AuthLib" />
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="TerraFX.Interop.Windows" />
+    <PackageReference Include="NSec.Cryptography" />
+    <PackageReference Include="Mono.Posix.NETStandard" />
+    <PackageReference Include="SharpZstd.Interop" ExcludeAssets="native" />
+    <PackageReference Include="Robust.Natives.Zstd" />
+    <PackageReference Include="SpaceWizards.Sodium" />
+    <PackageReference Include="libsodium" />
+    <PackageReference Include="JetBrains.Annotations" />
+    <PackageReference Include="System.Net.Http.WinHttpHandler" />
+    <PackageReference Include="Linguini.Bundle" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../SS14.Launcher/Models/Data/Migrations/*.sql" LogicalName="SS14.Launcher.Models.Data.Migrations.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../SS14.Launcher/Models/ContentManagement/Migrations/*.sql" LogicalName="SS14.Launcher.Models.ContentManagement.Migrations.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../SS14.Launcher/Models/OverrideAssets/Migrations/*.sql" LogicalName="SS14.Launcher.Models.OverrideAssets.Migrations.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../SS14.Launcher/Assets/Locale/**/*.ftl" LogicalName="SS14.Launcher.Assets.Locale.$([System.String]::Copy('%(RecursiveDir)').Replace('\','.').Replace('/','.'))%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../SS14.Launcher/Utility/runtime.json" LogicalName="Utility.runtime.json" />
+    <Content Include="../SS14.Launcher/signing_key" Link="signing_key" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

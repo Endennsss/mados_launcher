@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spacestation14.com/mados-launcher/ipc/v1.schema.json",
+  "title": "Mados Launcher worker IPC v1",
+  "oneOf": [
+    {
+      "$comment": "request",
+      "type": "object",
+      "required": ["v", "id", "method"],
+      "properties": {
+        "v": { "const": 1 },
+        "id": { "type": "string", "minLength": 1 },
+        "method": { "type": "string", "minLength": 1 },
+        "params": {}
+      },
+      "additionalProperties": false
+    },
+    {
+      "$comment": "response",
+      "type": "object",
+      "required": ["v", "id"],
+      "properties": {
+        "v": { "const": 1 },
+        "id": { "type": ["string", "null"] },
+        "result": {},
+        "error": {
+          "type": "object",
+          "required": ["code", "message"],
+          "properties": { "code": { "type": "string" }, "message": { "type": "string" }, "details": {} },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "$comment": "event",
+      "type": "object",
+      "required": ["v", "event", "data"],
+      "properties": { "v": { "const": 1 }, "event": { "type": "string" }, "data": {} },
+      "additionalProperties": false
+    }
+  ],
+  "x-methods": {
+    "app": ["getState", "getVersion", "openDeepLink", "shutdown"],
+    "auth": ["getAccounts", "login", "logout", "switchAccount"],
+    "servers": ["list", "refresh", "info", "connect"],
+    "favorites": ["list", "add", "remove"],
+    "playtime": ["getSummary", "clear"],
+    "news": ["list"],
+    "settings": ["get", "update"],
+    "content": ["openBundle"],
+    "updates": ["getStatus", "start"],
+    "connection": ["cancel", "confirmPrivacyPolicy"]
+  },
+  "x-events": [
+    "app.ready", "app.error", "auth.changed", "servers.updated", "connection.started",
+    "connection.progress", "connection.completed", "connection.failed", "update.progress",
+    "update.completed", "deepLink.received", "playtime.updated"
+  ]
+}

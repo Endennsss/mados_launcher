@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <Import Project="../Launcher.props" />
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -27,6 +27,7 @@
       <SubType>Designer</SubType>
     </AvaloniaResource>
     <AvaloniaResource Include="Assets\**" />
+    <EmbeddedResource Include="Assets\Locale\**\*.ftl" />
     <AvaloniaResource Update="Views\MainWindowLogin.xaml">
       <SubType>Designer</SubType>
     </AvaloniaResource>
