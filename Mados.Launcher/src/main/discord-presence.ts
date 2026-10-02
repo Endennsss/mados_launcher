@@ -115,6 +115,7 @@ export class DiscordPresenceService {
     if (!client || this.stopped || !this.snapshot?.enabled) return;
     try {
       await client.user?.setActivity(buildDiscordActivity(this.snapshot));
+      if (this.stopped || !this.snapshot?.enabled) return;
       this.onStatus("connected");
     } catch {
       this.markUnavailable();
