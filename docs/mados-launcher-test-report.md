@@ -13,7 +13,7 @@
 - `npm run prepare-worker` — успешно для `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`; publish self-contained.
 - `electron-builder --win --x64` — успешно: NSIS и ZIP, локально unsigned.
 - Debug playtime package `Mados.Launcher.Debug.Playtime.Windows.x64.zip` — собран для Windows x64, локально unsigned.
-- Debug Discord package `artifacts/Mados.Launcher.Debug.Discord.Windows.x64.v2.zip` — portable Windows x64, собран с реальным worker и проверен запуском упакованного приложения; SHA-256 `53B991801D37EF54E1046F9F11890F565FBAA03D399028D40942DC0713134E64`.
+- Debug Discord package `artifacts/Mados.Launcher.Debug.Discord.Windows.x64.v3.zip` — portable Windows x64, собран с реальным worker и проверен запуском упакованного приложения; SHA-256 `4BA9174AA475E8A1B886707013ED4BFA881C6825F69B128DC2E850B88D3CE769`.
 - GitHub Releases news source — worker merges releases from `Endennsss/mados_launcher` with the official RSS feed and keeps source/date/summary in the response.
 
 ## Время игры
