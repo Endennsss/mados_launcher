@@ -34,6 +34,36 @@ Rich Presence работает через Discord IPC в Electron main process �
 
 Для cross-build в CI можно явно указать RID (`$env:MADOS_WORKER_RID = "win-arm64"`, затем `npm run prepare-worker`) и передать electron-builder нужную архитектуру (`electron-builder --win --arm64`, `--mac --arm64`, `--linux --arm64`).
 
+## Инструменты и локальный сервер
+
+Вкладка «Инструменты» принимает публичную HTTPS-страницу Robust.Cdn или ZIP,
+выбирает сборку для текущей ОС/архитектуры и устанавливает её в отдельный
+каталог `launcher-tools.db` и `local-servers`. Renderer не получает доступ к
+процессам и файлам: worker сам проверяет ZIP, сохраняет конфигурацию через
+Tomlyn, запускает только один сервер на `127.0.0.1`, проверяет `/status`, ведёт
+live-логи и останавливает дерево процессов при закрытии лаунчера.
+
+Параметры формы сохраняются в `server_config.toml`; расширенный TOML-режим
+делает атомарную запись после валидации. Перед ручным обновлением создаётся
+backup с конфигурацией и `data`, доступен откат. Секретные значения остаются в
+worker и заменяются на безопасные маркеры в renderer и логах.
+
+Для локальной проверки worker можно запустить из каталога `Mados.Launcher`:
+
+```powershell
+node tools/smoke-local-server.mjs
+```
+
+Debug-пакет Windows x64 собирается так:
+
+```powershell
+$env:MADOS_WORKER_CONFIGURATION = "Debug"
+$env:MADOS_WORKER_RID = "win-x64"
+npm run build
+npm run prepare-worker
+npx electron-builder --dir --config.directories.output=../artifacts/mados-tools-debug
+```
+
 Матрица релизов выполняет в чистом checkout:
 
 ```powershell

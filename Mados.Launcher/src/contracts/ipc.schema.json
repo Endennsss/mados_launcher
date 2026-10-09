@@ -46,6 +46,13 @@
     "servers": ["list", "refresh", "info", "connect"],
     "favorites": ["list", "add", "remove"],
     "playtime": ["getSummary", "clear"],
+    "recentConnections": ["list"],
+    "serverNotes": ["list", "upsert", "remove"],
+    "monitoring": ["getFavorites", "refresh"],
+    "launchProfiles": ["list", "create", "update", "remove", "use"],
+    "notifications": ["list", "markRead", "clear"],
+    "tools": ["cdn.inspect", "cdn.import", "cdn.cancel"],
+    "localServers": ["list", "create", "update", "remove", "start", "stop", "restart", "getStatus", "getConfig", "saveConfig", "testPort", "openFolder", "openLog", "backups", "rollback"],
     "news": ["list"],
     "settings": ["get", "update"],
     "content": ["openBundle"],
@@ -53,11 +60,20 @@
     "connection": ["cancel", "confirmPrivacyPolicy"]
   },
   "x-events": [
-    "app.ready", "app.error", "auth.changed", "servers.updated", "connection.started",
+    "app.ready", "app.startup", "app.error", "auth.changed", "servers.updated", "connection.started",
     "connection.progress", "connection.completed", "connection.failed", "update.progress",
-    "update.completed", "deepLink.received", "playtime.updated", "presence.updated", "settings.changed"
+    "update.completed", "deepLink.received", "playtime.updated", "recentConnections.updated", "presence.updated", "settings.changed", "monitoring.updated", "notification.created", "launchProfiles.updated", "cdn.progress", "cdn.completed", "cdn.failed", "localServer.status", "localServer.log", "localServer.configChanged", "localServer.error"
   ],
   "x-event-payloads": {
+    "app.startup": {
+      "type": "object",
+      "required": ["stage"],
+      "properties": {
+        "stage": { "enum": ["starting-worker", "checking-data", "loading-ui", "ready"] },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
     "presence.updated": {
       "type": "object",
       "required": ["state", "enabled", "showNickname"],
@@ -88,7 +104,106 @@
             "showNickname": { "type": "boolean" }
           },
           "additionalProperties": false
-        }
+        },
+        "favoriteAvailabilityNotifications": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "monitoring.updated": {
+      "type": "object",
+      "required": ["accountId", "favorites"],
+      "properties": { "accountId": { "type": "string" }, "favorites": { "type": "array" } },
+      "additionalProperties": false
+    },
+    "notification.created": {
+      "type": "object",
+      "required": ["id", "kind", "title", "message", "createdAt", "readAt"],
+      "properties": { "id": { "type": "string" }, "kind": { "type": "string" }, "title": { "type": "string" }, "message": { "type": "string" }, "createdAt": { "type": "string" }, "readAt": { "type": ["string", "null"] } },
+      "additionalProperties": false
+    },
+    "launchProfiles.updated": {
+      "type": "object",
+      "required": ["accountId"],
+      "properties": { "accountId": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "recentConnections.updated": {
+      "type": "object",
+      "required": ["accountId"],
+      "properties": {
+        "accountId": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "cdn.progress": {
+      "type": "object",
+      "required": ["operationId", "stage"],
+      "properties": {
+        "operationId": { "type": "string" },
+        "stage": { "enum": ["inspecting", "downloading", "extracting", "validating", "completed", "failed", "cancelled"] },
+        "percent": { "type": ["number", "null"] },
+        "downloadedBytes": { "type": ["integer", "null"] },
+        "totalBytes": { "type": ["integer", "null"] },
+        "message": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "cdn.completed": {
+      "type": "object",
+      "required": ["operationId", "profileId"],
+      "properties": {
+        "operationId": { "type": "string" },
+        "profileId": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "cdn.failed": {
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "operationId": { "type": "string" },
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "localServer.status": {
+      "type": "object",
+      "required": ["profileId", "status", "port"],
+      "properties": {
+        "profileId": { "type": ["string", "null"] },
+        "status": { "enum": ["idle", "downloading", "extracting", "ready", "starting", "running", "stopping", "stopped", "error"] },
+        "pid": { "type": ["integer", "null"] },
+        "address": { "type": "string" },
+        "port": { "type": "integer" },
+        "readyAt": { "type": ["string", "null"] },
+        "lastError": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "localServer.log": {
+      "type": "object",
+      "required": ["profileId", "timestamp", "stream", "line"],
+      "properties": {
+        "profileId": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "stream": { "enum": ["stdout", "stderr"] },
+        "line": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "localServer.configChanged": {
+      "type": "object",
+      "required": ["profileId"],
+      "properties": { "profileId": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "localServer.error": {
+      "type": "object",
+      "required": ["profileId", "message"],
+      "properties": {
+        "profileId": { "type": "string" },
+        "message": { "type": "string" }
       },
       "additionalProperties": false
     }

@@ -36,6 +36,10 @@ npm run dist
 
 Новости в приложении объединяют официальный RSS Space Station 14 и опубликованные releases из [репозитория Mados Launcher](https://github.com/Endennsss/mados_launcher). История времени игры хранится локально в `playtime.db` отдельно для каждого аккаунта.
 
+## Bootstrap-установщик
+
+Каталог `Mados.Installer` содержит отдельный установщик в стиле Mados Launcher. Он не вшивает приложение в себя: при запуске смотрит последний стабильный GitHub Release, скачивает `Mados.Launcher.Windows.x64.zip`, безопасно распаковывает его в выбранное место и запускает лаунчер. Инструкции локальной сборки находятся в [Mados.Installer/README.md](Mados.Installer/README.md).
+
 ## Переменные разработки
 
 - `SS14_LAUNCHER_APPDATA_NAME=launcherTest` — изолирует каталоги данных во время разработки.

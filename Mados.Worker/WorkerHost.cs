@@ -21,6 +21,7 @@ using SS14.Launcher.Models.Logins;
 using SS14.Launcher.Models.OverrideAssets;
 using SS14.Launcher.Models.Playtime;
 using SS14.Launcher.Models.Presence;
+using SS14.Launcher.Models.RecentConnections;
 using SS14.Launcher.Models.ServerStatus;
 using SS14.Launcher.Utility;
 
@@ -43,6 +44,10 @@ public sealed class WorkerHost
     private readonly TextWriter _output;
     private readonly object _writeLock = new();
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly object _cdnLock = new();
+    private CancellationTokenSource? _cdnCancellation;
+    private string? _cdnOperationId;
+    private Guid? _localLaunchingAccount;
 
     private readonly DataManager _data;
     private readonly HttpClient _http;
@@ -56,6 +61,11 @@ public sealed class WorkerHost
     private readonly Updater _updater;
     private readonly PlaytimeStore _playtimeStore;
     private readonly PlaytimeTracker _playtimeTracker;
+    private readonly RecentConnectionStore _recentConnections;
+    private readonly ServerNotesStore _serverNotes;
+    private readonly LauncherInsightsStore _insights;
+    private readonly LocalServerStore _localServerStore;
+    private readonly LocalServerManager _localServers;
     private readonly object _serverSnapshotLock = new();
     private readonly Dictionary<string, ServerStatusSnapshot> _serverSnapshots = new(StringComparer.OrdinalIgnoreCase);
     private WorkerCommandBridge? _legacyBridge;
@@ -63,6 +73,8 @@ public sealed class WorkerHost
 
     private Task? _connectionTask;
     private CancellationTokenSource? _connectionCancellation;
+    private PendingRecentConnection? _pendingRecentConnection;
+    private Updater.UpdateStatus? _lastNotificationUpdateStatus;
     private readonly PresenceTracker _presence;
 
     private WorkerHost(TextWriter output)
@@ -80,6 +92,19 @@ public sealed class WorkerHost
         _connector = new Connector();
         _playtimeStore = new PlaytimeStore();
         _playtimeTracker = new PlaytimeTracker(_playtimeStore, update => SendEvent("playtime.updated", update));
+        _recentConnections = new RecentConnectionStore();
+        _serverNotes = new ServerNotesStore();
+        _insights = new LauncherInsightsStore();
+        _localServerStore = new LocalServerStore();
+        // CDN downloads use a separate no-redirect client. LocalServerManager
+        // validates every resolved address so a public URL cannot pivot into a
+        // loopback/private endpoint through DNS or redirects.
+        var cdnHttp = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+        {
+            Timeout = TimeSpan.FromMinutes(10)
+        };
+        _localServers = new LocalServerManager(_http, _localServerStore, cdnHttp: cdnHttp);
+        _localServers.Changed += LocalServerOnChanged;
 
         _presence = new PresenceTracker(
             (address, cancel) => ServerStatusProbe.FetchAsync(_http, address, cancel),
@@ -100,6 +125,7 @@ public sealed class WorkerHost
     {
         try
         {
+            SendEvent("app.startup", new { stage = "checking-data", message = "Проверяем данные…" });
             _launcherInfo.Initialize();
             _content.Initialize();
             _overrideAssets.Initialize();
@@ -120,21 +146,50 @@ public sealed class WorkerHost
             return;
         }
 
+        var backgroundRequests = new List<Task>();
         while (!_shutdown.IsCancellationRequested)
         {
-            var line = await Console.In.ReadLineAsync();
+            string? line;
+            try
+            {
+                // Shutdown cancels this read so the worker reaches the cleanup
+                // section instead of waiting forever for stdin to close.
+                line = await Console.In.ReadLineAsync(_shutdown.Token);
+            }
+            catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+            {
+                break;
+            }
             if (line == null)
                 break;
 
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
-            await HandleLineAsync(line);
+            var background = false;
+            try
+            {
+                using var request = JsonDocument.Parse(line);
+                background = request.RootElement.TryGetProperty("method", out var method)
+                    && method.ValueKind == JsonValueKind.String
+                    && method.GetString() is "tools.cdn.import" or "localServers.create" or "localServers.start" or "localServers.restart";
+            }
+            catch (JsonException) { /* HandleLineAsync returns the protocol error. */ }
+            if (background)
+            {
+                backgroundRequests.RemoveAll(task => task.IsCompleted);
+                backgroundRequests.Add(HandleLineAsync(line));
+            }
+            else await HandleLineAsync(line);
         }
 
+        _shutdown.Cancel();
+        lock (_cdnLock) _cdnCancellation?.Cancel();
+        await Task.WhenAll(backgroundRequests);
         _connectionCancellation?.Cancel();
         _presence.Dispose();
         _playtimeTracker.Stop();
+        await _localServers.DisposeAsync();
         if (_legacyBridge != null)
             await _legacyBridge.DisposeAsync();
         _login.Stop();
@@ -194,23 +249,16 @@ public sealed class WorkerHost
         {
             document = JsonDocument.Parse(line);
             var root = document.RootElement;
-
-            if (!root.TryGetProperty("id", out var idElement)
-                || !root.TryGetProperty("method", out var methodElement))
+            var requestId = WorkerProtocol.TryGetRequestId(root);
+            var validationError = WorkerProtocol.ValidateRequest(root);
+            if (validationError is not null)
             {
-                SendError(null, new WorkerError("INVALID_REQUEST", "Request must include id and method"));
+                SendError(requestId, new WorkerError(validationError, validationError == "UNSUPPORTED_VERSION" ? "Unsupported worker protocol version" : "Request must include a string id and method"));
                 return;
             }
 
-            var id = idElement.ValueKind == JsonValueKind.String
-                ? idElement.GetString()
-                : idElement.GetRawText();
-            var method = methodElement.GetString();
-            if (string.IsNullOrWhiteSpace(method))
-            {
-                SendError(id, new WorkerError("INVALID_REQUEST", "Request method is empty"));
-                return;
-            }
+            var id = requestId!;
+            var method = root.GetProperty("method").GetString()!;
 
             var parameters = root.TryGetProperty("params", out var paramsElement)
                 ? paramsElement
@@ -229,6 +277,10 @@ public sealed class WorkerHost
             catch (OperationCanceledException)
             {
                 SendError(id, new WorkerError("CANCELLED", "The operation was cancelled"));
+            }
+            catch (LocalServerException error)
+            {
+                SendError(id, new WorkerError(error.Code, error.Message));
             }
             catch (Exception e)
             {
@@ -259,13 +311,46 @@ public sealed class WorkerHost
             "auth.login" => await LoginAsync(parameters),
             "auth.logout" => await LogoutAsync(parameters),
             "auth.switchAccount" => SwitchAccount(parameters),
-            "servers.list" or "servers.refresh" => await GetServersAsync(),
+            "servers.list" => await GetServersAsync(false),
+            "servers.refresh" => await GetServersAsync(true),
             "servers.info" => await GetServerInfoAsync(parameters),
             "favorites.list" => GetFavorites(),
             "favorites.add" => AddFavorite(parameters),
             "favorites.remove" => RemoveFavorite(parameters),
             "playtime.getSummary" => GetPlaytimeSummary(parameters),
             "playtime.clear" => ClearPlaytime(),
+            "recentConnections.list" => ListRecentConnections(parameters),
+            "serverNotes.list" => ListServerNotes(),
+            "serverNotes.upsert" => UpsertServerNote(parameters),
+            "serverNotes.remove" => RemoveServerNote(parameters),
+            "monitoring.getFavorites" => GetMonitoringFavorites(),
+            "monitoring.refresh" => await RefreshMonitoringAsync(),
+            "launchProfiles.list" => ListLaunchProfiles(),
+            "launchProfiles.create" => CreateLaunchProfile(parameters),
+            "launchProfiles.update" => UpdateLaunchProfile(parameters),
+            "launchProfiles.remove" => RemoveLaunchProfile(parameters),
+            "launchProfiles.use" => UseLaunchProfile(parameters),
+            "notifications.list" => ListNotifications(),
+            "notifications.markRead" => MarkNotificationRead(parameters),
+            "notifications.clear" => ClearNotifications(),
+            "tools.cdn.inspect" => await InspectCdnAsync(parameters),
+            "tools.cdn.import" => await ImportCdnAsync(parameters),
+            "tools.cdn.cancel" => CancelCdn(parameters),
+            "localServers.list" => ListLocalServers(),
+            "localServers.create" => await CreateLocalServerAsync(parameters),
+            "localServers.update" => UpdateLocalServer(parameters),
+            "localServers.remove" => await RemoveLocalServerAsync(parameters),
+            "localServers.start" => await StartLocalServerAsync(parameters),
+            "localServers.stop" => await StopLocalServerAsync(parameters),
+            "localServers.restart" => await RestartLocalServerAsync(parameters),
+            "localServers.getStatus" => GetLocalServerStatus(parameters),
+            "localServers.getConfig" => await GetLocalServerConfigAsync(parameters),
+            "localServers.saveConfig" => await SaveLocalServerConfigAsync(parameters),
+            "localServers.testPort" => TestLocalServerPort(parameters),
+            "localServers.openFolder" => OpenLocalServerFolder(parameters),
+            "localServers.openLog" => OpenLocalServerLog(parameters),
+            "localServers.backups" => ListLocalServerBackups(parameters),
+            "localServers.rollback" => await RollbackLocalServerAsync(parameters),
             "news.list" => await GetNewsAsync(),
             "settings.get" => GetSettings(),
             "settings.update" => UpdateSettings(parameters),
@@ -365,7 +450,7 @@ public sealed class WorkerHost
 
         _login.ActiveAccountId = loginInfo.UserId;
         _data.CommitConfig();
-        SendEvent("auth.changed", new { accounts = GetAccounts(), activeAccount = GetAccountDto(_login.ActiveAccount) });
+        SendEvent("auth.changed", new { accounts = GetAccounts(), activeAccount = GetAccountDto(_login.ActiveAccount), favorites = GetFavorites() });
         ConfigurePresence();
         return GetAccountDto(_login.ActiveAccount)!;
     }
@@ -387,7 +472,7 @@ public sealed class WorkerHost
             _login.ActiveAccountId = next?.UserId;
         }
         _data.CommitConfig();
-        SendEvent("auth.changed", new { accounts = GetAccounts(), activeAccount = GetAccountDto(_login.ActiveAccount) });
+        SendEvent("auth.changed", new { accounts = GetAccounts(), activeAccount = GetAccountDto(_login.ActiveAccount), favorites = GetFavorites() });
         ConfigurePresence();
         return new { ok = true };
     }
@@ -399,12 +484,12 @@ public sealed class WorkerHost
             throw new WorkerRpcException(new WorkerError("ACCOUNT_NOT_FOUND", "Account was not found"));
 
         _login.ActiveAccountId = accountId;
-        SendEvent("auth.changed", new { accounts = GetAccounts(), activeAccount = GetAccountDto(_login.ActiveAccount) });
+        SendEvent("auth.changed", new { accounts = GetAccounts(), activeAccount = GetAccountDto(_login.ActiveAccount), favorites = GetFavorites() });
         ConfigurePresence();
         return GetAccountDto(_login.ActiveAccount)!;
     }
 
-    private async Task<object> GetServersAsync()
+    private async Task<object> GetServersAsync(bool refreshMonitoring)
     {
         using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var servers = new Dictionary<string, ServerDto>(StringComparer.OrdinalIgnoreCase);
@@ -491,6 +576,8 @@ public sealed class WorkerHost
             partialError = failedHubs.Count > 0 && servers.Count > 0
         };
         SendEvent("servers.updated", result);
+        if (refreshMonitoring && _login.ActiveAccountId is not null)
+            await RefreshMonitoringAsync(servers.Values);
         return result;
     }
 
@@ -538,6 +625,7 @@ public sealed class WorkerHost
                 description = info.Desc,
                 links = info.Links?.Select(link => new { name = link.Name, icon = link.Icon, url = link.Url }).ToArray()
                          ?? Array.Empty<object>(),
+                name = status?.Name,
                 status = status == null ? "offline" : "online",
                 playerCount = status?.PlayerCount,
                 softMaxPlayerCount = status?.SoftMaxPlayerCount,
@@ -703,7 +791,8 @@ public sealed class WorkerHost
             discordUrl = ConfigConstants.DiscordUrl,
             websiteUrl = ConfigConstants.WebsiteUrl,
             discordPresenceEnabled = _data.GetCVar(CVars.DiscordPresenceEnabled),
-            discordPresenceShowNickname = _data.GetCVar(CVars.DiscordPresenceShowNickname)
+            discordPresenceShowNickname = _data.GetCVar(CVars.DiscordPresenceShowNickname),
+            favoriteAvailabilityNotifications = _data.GetCVar(CVars.FavoriteAvailabilityNotifications)
         };
     }
 
@@ -728,6 +817,8 @@ public sealed class WorkerHost
             _data.SetCVar(CVars.DiscordPresenceEnabled, discordPresenceEnabled.GetBoolean());
         if (TryGetProperty(parameters, "discordPresenceShowNickname", out var discordPresenceShowNickname))
             _data.SetCVar(CVars.DiscordPresenceShowNickname, discordPresenceShowNickname.GetBoolean());
+        if (TryGetProperty(parameters, "favoriteAvailabilityNotifications", out var favoriteAvailabilityNotifications))
+            _data.SetCVar(CVars.FavoriteAvailabilityNotifications, favoriteAvailabilityNotifications.GetBoolean());
         if (TryGetProperty(parameters, "language", out var language))
             _data.SetCVar(CVars.Language, language.ValueKind == JsonValueKind.Null ? null : language.GetString());
         if (TryGetProperty(parameters, "dismissEarlyAccess", out var dismissEarlyAccess) && dismissEarlyAccess.GetBoolean())
@@ -738,7 +829,7 @@ public sealed class WorkerHost
             _data.SetCVar(CVars.HasDismissedRosettaWarning, true);
 
         _data.CommitConfig();
-        SendEvent("settings.changed", new { discord = GetDiscordSettings() });
+        SendEvent("settings.changed", new { discord = GetDiscordSettings(), favoriteAvailabilityNotifications = _data.GetCVar(CVars.FavoriteAvailabilityNotifications) });
         ConfigurePresence();
         return GetSettings();
     }
@@ -794,6 +885,666 @@ public sealed class WorkerHost
         return new { removed };
     }
 
+    private object ListRecentConnections(JsonElement parameters)
+    {
+        if (_login.ActiveAccountId is not { } accountId || accountId == Guid.Empty)
+            throw new WorkerRpcException(new WorkerError("AUTH_REQUIRED", "An active account is required for recent connections"));
+
+        var limit = OptionalInt(parameters, "limit") ?? RecentConnectionStore.DefaultLimit;
+        try
+        {
+            return _recentConnections.List(accountId, limit).Select(ToRecentConnectionDto).ToArray();
+        }
+        catch (ArgumentOutOfRangeException error)
+        {
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", error.Message));
+        }
+        catch (ArgumentException error)
+        {
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", error.Message));
+        }
+    }
+
+    private static object ToRecentConnectionDto(RecentConnection connection)
+        => new
+        {
+            address = connection.Address,
+            name = connection.Name,
+            lastConnectedAt = connection.LastConnectedAt,
+            playerCount = connection.PlayerCount,
+            pingMs = connection.PingMs
+        };
+
+    private object ListServerNotes()
+    {
+        var accountId = RequireActiveAccountForNotes();
+        return _serverNotes.List(accountId).Select(ToServerNoteDto).ToArray();
+    }
+
+    private object? UpsertServerNote(JsonElement parameters)
+    {
+        var accountId = RequireActiveAccountForNotes();
+        var address = RequiredString(parameters, "address");
+        var text = NoteTextParameter(parameters);
+        try
+        {
+            var note = _serverNotes.Upsert(accountId, address, text);
+            return note is null ? null : ToServerNoteDto(note);
+        }
+        catch (ArgumentException error)
+        {
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", error.Message));
+        }
+    }
+
+    private object RemoveServerNote(JsonElement parameters)
+    {
+        var accountId = RequireActiveAccountForNotes();
+        var address = RequiredString(parameters, "address");
+        try
+        {
+            return new { removed = _serverNotes.Remove(accountId, address) };
+        }
+        catch (ArgumentException error)
+        {
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", error.Message));
+        }
+    }
+
+    private Guid RequireActiveAccountForNotes()
+    {
+        if (_login.ActiveAccountId is not { } accountId || accountId == Guid.Empty)
+            throw new WorkerRpcException(new WorkerError("AUTH_REQUIRED", "An active account is required for server notes"));
+        return accountId;
+    }
+
+    private static object ToServerNoteDto(ServerNote note)
+        => new { address = note.Address, text = note.Text, updatedAt = note.UpdatedAtUtc };
+
+    private object GetMonitoringFavorites()
+    {
+        var accountId = RequireActiveInsightsAccount();
+        var favorites = _data.FavoriteServers.Items.Select(f => new FavoriteMonitorTarget(f.Address, f.Name));
+        return new
+        {
+            accountId,
+            favorites = _insights.GetFavoriteSummaries(accountId, favorites).Select(ToFavoriteMonitorDto).ToArray()
+        };
+    }
+
+    private async Task<object> RefreshMonitoringAsync(IEnumerable<ServerDto>? catalog = null)
+    {
+        var accountId = RequireActiveInsightsAccount();
+        var favoriteTargets = _data.FavoriteServers.Items
+            .Select(f => new FavoriteMonitorTarget(f.Address, f.Name))
+            .ToArray();
+        var catalogByAddress = catalog?
+            .Select(server => (server, address: LauncherInsightsStore.NormalizeAddress(server.Address)))
+            .GroupBy(item => item.address, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().server, StringComparer.OrdinalIgnoreCase);
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        foreach (var favorite in favoriteTargets)
+        {
+            string normalizedAddress;
+            try
+            {
+                normalizedAddress = LauncherInsightsStore.NormalizeAddress(favorite.Address);
+            }
+            catch (ArgumentException)
+            {
+                continue;
+            }
+
+            ServerStatusSnapshot? snapshot = null;
+            if (catalogByAddress is not null && catalogByAddress.TryGetValue(normalizedAddress, out var listed))
+            {
+                snapshot = new ServerStatusSnapshot(listed.Name, listed.PlayerCount, listed.SoftMaxPlayerCount, listed.RoundStartTime, listed.RunLevel, listed.Tags, listed.PingMs, listed.Language, listed.Map, listed.Mode);
+            }
+            else if (catalog is null)
+            {
+                snapshot = GetServerSnapshot(normalizedAddress);
+            }
+
+            // A direct probe is only needed when the manual refresh did not
+            // receive this favorite from the hub. This also covers favorites
+            // hidden by hub filters or temporarily absent from the catalog.
+            if (snapshot is null)
+                snapshot = await ServerStatusProbe.FetchAsync(_http, normalizedAddress, cancel.Token);
+
+            var write = _insights.RecordSample(
+                accountId,
+                new MonitorSample(
+                    normalizedAddress,
+                    snapshot?.Name ?? favorite.Name,
+                    snapshot is not null,
+                    snapshot?.PlayerCount,
+                    snapshot?.SoftMaxPlayerCount,
+                    snapshot?.PingMs,
+                    snapshot?.Map,
+                    snapshot?.Mode),
+                _data.GetCVar(CVars.FavoriteAvailabilityNotifications));
+            if (write.Notification is { } notification)
+            {
+                SendEvent("notification.created", ToNotificationDto(notification));
+            }
+        }
+
+        var result = new
+        {
+            accountId,
+            favorites = _insights.GetFavoriteSummaries(accountId, favoriteTargets).Select(ToFavoriteMonitorDto).ToArray()
+        };
+        SendEvent("monitoring.updated", result);
+        return result;
+    }
+
+    private object ListLaunchProfiles()
+    {
+        var accountId = RequireActiveInsightsAccount();
+        return _insights.ListProfiles(accountId).Select(ToLaunchProfileDto).ToArray();
+    }
+
+    private object CreateLaunchProfile(JsonElement parameters)
+    {
+        var accountId = RequireActiveInsightsAccount();
+        try
+        {
+            var profile = _insights.CreateProfile(accountId, RequiredString(parameters, "name"), RequiredString(parameters, "address"));
+            SendEvent("launchProfiles.updated", new { accountId });
+            return ToLaunchProfileDto(profile);
+        }
+        catch (ArgumentException error)
+        {
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", error.Message));
+        }
+    }
+
+    private object UpdateLaunchProfile(JsonElement parameters)
+    {
+        var accountId = RequireActiveInsightsAccount();
+        try
+        {
+            var profile = _insights.UpdateProfile(accountId, RequiredString(parameters, "id"), RequiredString(parameters, "name"), RequiredString(parameters, "address"));
+            SendEvent("launchProfiles.updated", new { accountId });
+            return ToLaunchProfileDto(profile);
+        }
+        catch (KeyNotFoundException error)
+        {
+            throw new WorkerRpcException(new WorkerError("PROFILE_NOT_FOUND", error.Message));
+        }
+        catch (ArgumentException error)
+        {
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", error.Message));
+        }
+    }
+
+    private object RemoveLaunchProfile(JsonElement parameters)
+    {
+        var accountId = RequireActiveInsightsAccount();
+        try
+        {
+            var removed = _insights.RemoveProfile(accountId, RequiredString(parameters, "id"));
+            if (removed)
+                SendEvent("launchProfiles.updated", new { accountId });
+            return new { removed };
+        }
+        catch (ArgumentException error)
+        {
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", error.Message));
+        }
+    }
+
+    private object UseLaunchProfile(JsonElement parameters)
+    {
+        var accountId = RequireActiveInsightsAccount();
+        try
+        {
+            var profile = _insights.UseProfile(accountId, RequiredString(parameters, "id"));
+            SendEvent("launchProfiles.updated", new { accountId });
+            return ToLaunchProfileDto(profile);
+        }
+        catch (KeyNotFoundException error)
+        {
+            throw new WorkerRpcException(new WorkerError("PROFILE_NOT_FOUND", error.Message));
+        }
+        catch (ArgumentException error)
+        {
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", error.Message));
+        }
+    }
+
+    private object ListNotifications()
+    {
+        var accountId = RequireActiveInsightsAccount();
+        return _insights.ListNotifications(accountId).Select(ToNotificationDto).ToArray();
+    }
+
+    private object MarkNotificationRead(JsonElement parameters)
+    {
+        var accountId = RequireActiveInsightsAccount();
+        try
+        {
+            return new { marked = _insights.MarkNotificationRead(accountId, RequiredString(parameters, "id")) };
+        }
+        catch (ArgumentException error)
+        {
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", error.Message));
+        }
+    }
+
+    private object ClearNotifications()
+    {
+        var accountId = RequireActiveInsightsAccount();
+        return new { removed = _insights.ClearNotifications(accountId) };
+    }
+
+    private async Task<object> InspectCdnAsync(JsonElement parameters)
+    {
+        try
+        {
+            var source = OptionalString(parameters, "sourceUrl") ?? OptionalString(parameters, "source")
+                ?? throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", "Parameter 'sourceUrl' is required"));
+            var result = await _localServers.InspectAsync(source, _shutdown.Token);
+            return ToCdnInspectDto(result);
+        }
+        catch (LocalServerException error)
+        {
+            SendEvent("cdn.failed", new { code = error.Code, message = error.Message });
+            throw new WorkerRpcException(new WorkerError(error.Code, error.Message));
+        }
+        catch (HttpRequestException error)
+        {
+            SendEvent("cdn.failed", new { code = "CDN_UNAVAILABLE", message = error.Message });
+            throw new WorkerRpcException(new WorkerError("CDN_UNAVAILABLE", error.Message));
+        }
+    }
+
+    private async Task<object> ImportCdnAsync(JsonElement parameters)
+    {
+        var source = OptionalString(parameters, "localPath") ?? OptionalString(parameters, "sourceUrl") ?? OptionalString(parameters, "source");
+        if (string.IsNullOrWhiteSpace(source))
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", "Parameter 'sourceUrl' or 'localPath' is required"));
+        var operationId = RequiredString(parameters, "operationId");
+        if (!Guid.TryParse(operationId, out _))
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", "Operation identifier must be a UUID"));
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+        lock (_cdnLock)
+        {
+            if (_cdnCancellation is not null)
+                throw new WorkerRpcException(new WorkerError("CDN_BUSY", "Дождитесь завершения текущей установки."));
+            _cdnCancellation = cancellation;
+            _cdnOperationId = operationId;
+        }
+        try
+        {
+            SendEvent("cdn.progress", new { operationId, stage = "inspecting", percent = (double?)null, message = "Проверяем сборку…" });
+            var inspection = await _localServers.InspectAsync(source, cancellation.Token);
+            var buildId = OptionalString(parameters, "buildId");
+            var selectedUrl = buildId is null ? null : inspection.Variants.FirstOrDefault(v => string.Equals(v.Url, buildId, StringComparison.OrdinalIgnoreCase))?.Url;
+            if (buildId is not null && selectedUrl is null)
+                throw new LocalServerException("BUILD_NOT_FOUND", "Выбранная сборка не найдена.");
+            SendEvent("cdn.progress", new { operationId, stage = "downloading", percent = 0d, message = "Скачиваем сборку…" });
+            var profile = await _localServers.ImportAsync(
+                source,
+                selectedUrl,
+                OptionalString(parameters, "profileId"),
+                OptionalString(parameters, "profileName") ?? OptionalString(parameters, "name"),
+                OptionalInt(parameters, "port"),
+                cancellation.Token);
+            SendEvent("cdn.progress", new { operationId, stage = "completed", percent = 100d, message = "Сборка установлена" });
+            SendEvent("cdn.completed", new { operationId, profileId = profile.Id });
+            return new { operationId, profile = ToLocalServerDto(profile) };
+        }
+        catch (LocalServerException error)
+        {
+            SendEvent("cdn.failed", new { operationId, code = error.Code, message = error.Message });
+            throw new WorkerRpcException(new WorkerError(error.Code, error.Message));
+        }
+        catch (IOException error)
+        {
+            SendEvent("cdn.failed", new { operationId, code = "LOCAL_SERVER_IO", message = error.Message });
+            throw new WorkerRpcException(new WorkerError("LOCAL_SERVER_IO", error.Message));
+        }
+        catch (OperationCanceledException)
+        {
+            SendEvent("cdn.progress", new { operationId, stage = "cancelled", percent = (double?)null, message = "Установка отменена" });
+            throw;
+        }
+        catch (HttpRequestException)
+        {
+            SendEvent("cdn.failed", new { operationId, message = "Не удалось скачать сборку. Проверьте подключение и повторите." });
+            throw new WorkerRpcException(new WorkerError("CDN_UNAVAILABLE", "Не удалось скачать сборку. Проверьте подключение и повторите."));
+        }
+        finally
+        {
+            lock (_cdnLock)
+            {
+                _cdnCancellation = null;
+                _cdnOperationId = null;
+            }
+        }
+    }
+
+    private object CancelCdn(JsonElement parameters)
+    {
+        var operationId = RequiredString(parameters, "operationId");
+        lock (_cdnLock)
+        {
+            var active = _cdnOperationId == operationId && _cdnCancellation is not null;
+            if (active) _cdnCancellation!.Cancel();
+            return new { cancelled = active };
+        }
+    }
+
+    private object ListLocalServers() => _localServers.ListProfiles().Select(ToLocalServerDto).ToArray();
+
+    private async Task<object> CreateLocalServerAsync(JsonElement parameters)
+    {
+        // Creation is an import in the public protocol. Keeping this alias
+        // avoids a second code path that could bypass archive validation.
+        return await ImportCdnAsync(parameters);
+    }
+
+    private object UpdateLocalServer(JsonElement parameters)
+    {
+        try
+        {
+            var profile = _localServers.UpdateProfileSettings(
+                RequiredString(parameters, "id"), OptionalString(parameters, "name"), OptionalInt(parameters, "port"), OptionalString(parameters, "bindAddress"));
+            return ToLocalServerDto(profile);
+        }
+        catch (LocalServerException error)
+        {
+            throw new WorkerRpcException(new WorkerError(error.Code, error.Message));
+        }
+    }
+
+    private async Task<object> RemoveLocalServerAsync(JsonElement parameters)
+    {
+        try
+        {
+            return new { removed = await _localServers.RemoveProfileAsync(RequiredString(parameters, "id"), _shutdown.Token) };
+        }
+        catch (LocalServerException error)
+        {
+            throw new WorkerRpcException(new WorkerError(error.Code, error.Message));
+        }
+    }
+
+    private async Task<object> StartLocalServerAsync(JsonElement parameters)
+    {
+        try
+        {
+            _localLaunchingAccount = _login.ActiveAccountId;
+            return ToLocalServerStatusDto(await _localServers.StartAsync(RequiredString(parameters, "id"), _shutdown.Token));
+        }
+        catch (LocalServerException error)
+        {
+            throw new WorkerRpcException(new WorkerError(error.Code, error.Message));
+        }
+    }
+
+    private async Task<object> StopLocalServerAsync(JsonElement parameters)
+    {
+        try
+        {
+            return ToLocalServerStatusDto(await _localServers.StopAsync(OptionalString(parameters, "id"), _shutdown.Token));
+        }
+        catch (LocalServerException error)
+        {
+            throw new WorkerRpcException(new WorkerError(error.Code, error.Message));
+        }
+    }
+
+    private async Task<object> RestartLocalServerAsync(JsonElement parameters)
+    {
+        try
+        {
+            _localLaunchingAccount = _login.ActiveAccountId;
+            return ToLocalServerStatusDto(await _localServers.RestartAsync(RequiredString(parameters, "id"), _shutdown.Token));
+        }
+        catch (LocalServerException error)
+        {
+            throw new WorkerRpcException(new WorkerError(error.Code, error.Message));
+        }
+    }
+
+    private object GetLocalServerStatus(JsonElement parameters)
+    {
+        var requestedId = OptionalString(parameters, "id");
+        var runtime = _localServers.GetStatus();
+        if (requestedId is not null && runtime.ProfileId != requestedId)
+        {
+            var profile = _localServers.ListProfiles().FirstOrDefault(item => item.Id == requestedId);
+            return ToLocalServerStatusDto(new LocalServerRuntimeStatus(LocalServerStatus.Idle, requestedId, null, null, null, profile?.Port));
+        }
+        return ToLocalServerStatusDto(runtime);
+    }
+
+    private async Task<object> GetLocalServerConfigAsync(JsonElement parameters)
+    {
+        try
+        {
+            var id = RequiredString(parameters, "id");
+            return await _localServers.GetConfigurationAsync(id, _shutdown.Token);
+        }
+        catch (LocalServerException error) { throw new WorkerRpcException(new WorkerError(error.Code, error.Message)); }
+    }
+
+    private async Task<object> SaveLocalServerConfigAsync(JsonElement parameters)
+    {
+        try
+        {
+            var id = RequiredString(parameters, "id");
+            var config = TryGetProperty(parameters, "config", out var configElement) && configElement.ValueKind == JsonValueKind.Object ? configElement : parameters;
+            var input = new LocalServerConfiguration(
+                OptionalString(config, "name"),
+                OptionalString(config, "hostname"),
+                OptionalString(config, "bindAddress") ?? LocalServerManager.DefaultBindAddress,
+                OptionalInt(config, "port") ?? LocalServerManager.DefaultPort,
+                OptionalInt(config, "maxPlayers"),
+                OptionalString(config, "authMode"),
+                OptionalString(config, "rawToml") ?? string.Empty);
+            var mode = RequiredString(parameters, "mode");
+            if (mode == "raw")
+            {
+                await _localServers.SaveConfigAsync(id, input.RawToml, _shutdown.Token);
+                return await _localServers.GetConfigurationAsync(id, _shutdown.Token);
+            }
+            if (mode != "fields") throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", "Invalid config mode"));
+            return await _localServers.SaveConfigurationAsync(id, input, _shutdown.Token);
+        }
+        catch (LocalServerException error) { throw new WorkerRpcException(new WorkerError(error.Code, error.Message)); }
+    }
+
+    private object TestLocalServerPort(JsonElement parameters)
+    {
+        var port = OptionalInt(parameters, "port") ?? LocalServerManager.DefaultPort;
+        var bind = OptionalString(parameters, "bindAddress") ?? LocalServerManager.DefaultBindAddress;
+        LocalServerConfig.ValidatePort(port);
+        LocalServerConfig.ValidateBind(bind);
+        return new { address = bind, available = LocalServerManager.IsPortAvailable(bind, port), error = (string?)null, port };
+    }
+
+    private object OpenLocalServerFolder(JsonElement parameters)
+    {
+        var profile = _localServers.ListProfiles().FirstOrDefault(p => p.Id == RequiredString(parameters, "id"))
+            ?? throw new WorkerRpcException(new WorkerError("PROFILE_NOT_FOUND", "Локальный профиль не найден."));
+        return new { path = profile.InstallPath };
+    }
+
+    private object OpenLocalServerLog(JsonElement parameters)
+    {
+        try
+        {
+            var path = _localServers.GetLogPath(RequiredString(parameters, "id"));
+            return new { path };
+        }
+        catch (LocalServerException error) { throw new WorkerRpcException(new WorkerError(error.Code, error.Message)); }
+    }
+
+    private object ListLocalServerBackups(JsonElement parameters)
+    {
+        try
+        {
+            return _localServers.ListBackups(RequiredString(parameters, "id")).Select(backup => new
+            {
+                id = backup.Id,
+                profileId = backup.ProfileId,
+                createdAt = backup.CreatedAtUtc,
+                reason = backup.Reason
+            }).ToArray();
+        }
+        catch (LocalServerException error) { throw new WorkerRpcException(new WorkerError(error.Code, error.Message)); }
+    }
+
+    private async Task<object> RollbackLocalServerAsync(JsonElement parameters)
+    {
+        try
+        {
+            var id = RequiredString(parameters, "id");
+            await _localServers.RollbackAsync(id, RequiredString(parameters, "backupId"), _shutdown.Token);
+            var profile = _localServers.ListProfiles().First(item => item.Id == id);
+            return ToLocalServerDto(profile);
+        }
+        catch (LocalServerException error) { throw new WorkerRpcException(new WorkerError(error.Code, error.Message)); }
+    }
+
+    private static object ToCdnInspectDto(CdnInspectResult result)
+    {
+        var builds = result.Variants.Select(v => new
+        {
+            id = v.Url,
+            version = v.Version,
+            platform = v.Platform,
+            architecture = v.Architecture,
+            downloadUrl = v.Url,
+            sizeBytes = v.SizeBytes,
+            publishedAt = v.PublishedAt
+        }).ToArray();
+        var platform = OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsMacOS() ? "macos" : "linux";
+        var architecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.Arm64 ? "arm64" : "x64";
+        var recommended = builds.FirstOrDefault(v => string.Equals(v.platform, platform, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(v.architecture, architecture, StringComparison.OrdinalIgnoreCase))?.id
+            ?? (builds.Length == 1 && builds[0].platform is null && builds[0].architecture is null ? builds[0].id : null);
+        return new
+        {
+            sourceUrl = result.Source,
+            sourceType = string.Equals(result.Kind, "zip", StringComparison.OrdinalIgnoreCase) ? "zip" : "robust-cdn",
+            builds,
+            recommendedBuildId = recommended
+        };
+    }
+
+    private static object ToLocalServerDto(LocalServerProfile profile) => new
+    {
+        id = profile.Id,
+        name = profile.Name,
+        sourceUrl = profile.SourceUrl,
+        installPath = profile.InstallPath,
+        version = profile.Version,
+        platform = profile.Platform,
+        architecture = profile.Architecture,
+        port = profile.Port,
+        bindAddress = profile.BindAddress,
+        dataPath = profile.DataPath,
+        configPath = profile.ConfigPath,
+        createdAt = profile.CreatedAtUtc,
+        updatedAt = profile.UpdatedAtUtc,
+        lastStartedAt = profile.LastStartedAtUtc
+    };
+
+    private static object ToLocalServerStatusDto(LocalServerRuntimeStatus status) => new
+    {
+        status = status.Status.ToString().ToLowerInvariant(),
+        profileId = status.ProfileId,
+        pid = status.Pid,
+        address = $"ss14://{LocalServerManager.DefaultBindAddress}:{status.Port ?? LocalServerManager.DefaultPort}",
+        port = status.Port ?? LocalServerManager.DefaultPort,
+        readyAt = status.Status == LocalServerStatus.Running ? status.StartedAt : null,
+        lastError = status.Error
+    };
+
+    private void LocalServerOnChanged(LocalServerEvent value)
+    {
+        if (value.Kind == "log")
+            SendEvent("localServer.log", new { profileId = value.ProfileId, timestamp = DateTimeOffset.UtcNow, stream = value.Stream, line = value.Message });
+        else if (value.Kind == "configChanged")
+            SendEvent("localServer.configChanged", new { profileId = value.ProfileId });
+        else if (value.Status is { } status)
+        {
+            var port = value.Port ?? LocalServerManager.DefaultPort;
+            var address = $"ss14://{LocalServerManager.DefaultBindAddress}:{port}";
+            SendEvent("localServer.status", new
+            {
+                profileId = value.ProfileId,
+                status = status.ToString().ToLowerInvariant(),
+                pid = value.Pid,
+                address,
+                port,
+                readyAt = status == LocalServerStatus.Running ? value.StartedAt : null,
+                lastError = value.Message
+            });
+            if (status == LocalServerStatus.Running && value.ProfileId is { Length: > 0 } profileId
+                && _localLaunchingAccount is { } accountId)
+            {
+                try
+                {
+                    var localProfile = _localServers.ListProfiles().FirstOrDefault(profile => profile.Id == profileId);
+                    if (localProfile is not null)
+                    {
+                        if (!_insights.ListProfiles(accountId).Any(item => item.Address.TrimEnd('/') == address.TrimEnd('/')))
+                        {
+                            _insights.CreateProfile(accountId, localProfile.Name, address);
+                            SendEvent("launchProfiles.updated", new { accountId });
+                        }
+                    }
+                }
+                catch (Exception error)
+                {
+                    Log.Warning(error, "Could not create a launch profile for local server");
+                }
+            }
+            if (status == LocalServerStatus.Error)
+                SendEvent("localServer.error", new { profileId = value.ProfileId, message = value.Message });
+        }
+        else if (value.Kind != "ready")
+        {
+            string? operationId;
+            lock (_cdnLock) operationId = _cdnOperationId;
+            if (operationId is not null)
+                SendEvent("cdn.progress", new { operationId, stage = value.Kind, percent = value.Progress is { } amount ? (double?)Math.Round(amount * 100, 1) : null, downloadedBytes = (long?)null, totalBytes = (long?)null, message = value.Message ?? (value.Kind == "extracting" ? "Распаковываем сборку…" : "Скачиваем сборку…") });
+        }
+    }
+
+    private Guid RequireActiveInsightsAccount()
+    {
+        if (_login.ActiveAccountId is not { } accountId || accountId == Guid.Empty)
+            throw new WorkerRpcException(new WorkerError("AUTH_REQUIRED", "An active account is required"));
+        return accountId;
+    }
+
+    private static object ToFavoriteMonitorDto(FavoriteMonitorSummary summary)
+        => new
+        {
+            address = summary.Address,
+            name = summary.Name,
+            isOnline = summary.IsOnline,
+            playerCount = summary.PlayerCount,
+            softMaxPlayerCount = summary.SoftMaxPlayerCount,
+            pingMs = summary.PingMs,
+            pingDeltaMs = summary.PingDeltaMs,
+            playerDelta = summary.PlayerDelta,
+            samples = summary.Samples.Select(sample => new { capturedAt = sample.CapturedAt, isOnline = sample.IsOnline, pingMs = sample.PingMs, playerCount = sample.PlayerCount }).ToArray()
+        };
+
+    private static object ToLaunchProfileDto(LaunchProfile profile)
+        => new { id = profile.Id, address = profile.Address, name = profile.Name, createdAt = profile.CreatedAtUtc, lastUsedAt = profile.LastUsedAtUtc };
+
+    private static object ToNotificationDto(LauncherNotification notification)
+        => new { id = notification.Id, kind = notification.Kind, title = notification.Title, message = notification.Message, createdAt = notification.CreatedAtUtc, readAt = notification.ReadAtUtc };
+
     private object StartConnection(JsonElement parameters)
     {
         var address = RequiredString(parameters, "address");
@@ -806,6 +1557,9 @@ public sealed class WorkerHost
 
         _presence.Prepare(address, serverName, _login.ActiveAccount?.Username, snapshot);
         _playtimeTracker.Prepare(_login.ActiveAccountId, PresenceAddress.Sanitize(address) ?? address, serverName, countable: true);
+        _pendingRecentConnection = _login.ActiveAccountId is { } accountId && accountId != Guid.Empty
+            ? new PendingRecentConnection(accountId, PresenceAddress.Sanitize(address) ?? address, serverName, snapshot)
+            : null;
         _connectionCancellation?.Dispose();
         _connectionCancellation = new CancellationTokenSource();
         _connectionTask = ObserveConnectionAsync(address, reason, _connectionCancellation.Token);
@@ -856,6 +1610,7 @@ public sealed class WorkerHost
 
         _presence.Prepare(null, null, null);
         _playtimeTracker.Prepare(null, path, null, countable: false);
+        _pendingRecentConnection = null;
         _connectionCancellation?.Dispose();
         _connectionCancellation = new CancellationTokenSource();
         _connectionTask = ObserveContentBundleAsync(path, _connectionCancellation.Token);
@@ -934,6 +1689,15 @@ public sealed class WorkerHost
         return new { shuttingDown = true };
     }
 
+    private static int? OptionalInt(JsonElement parameters, string property)
+    {
+        if (!TryGetProperty(parameters, property, out var value) || value.ValueKind == JsonValueKind.Null)
+            return null;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed))
+            return parsed;
+        throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", $"Parameter '{property}' must be an integer"));
+    }
+
     private ServerStatusSnapshot? GetServerSnapshot(string address)
     {
         lock (_serverSnapshotLock)
@@ -958,6 +1722,35 @@ public sealed class WorkerHost
     {
         if (e.PropertyName == nameof(Connector.Status))
         {
+            if (_connector.Status == Connector.ConnectionStatus.ClientRunning && _pendingRecentConnection is { } pending)
+            {
+                _pendingRecentConnection = null;
+                try
+                {
+                    _recentConnections.Record(
+                        pending.AccountId,
+                        pending.Address,
+                        pending.Name,
+                        DateTimeOffset.UtcNow,
+                        pending.Snapshot?.PlayerCount,
+                        pending.Snapshot?.PingMs);
+                    SendEvent("recentConnections.updated", new { accountId = pending.AccountId });
+                }
+                catch (Exception error)
+                {
+                    Log.Warning(error, "Could not save the recent server connection");
+                    SendEvent("app.error", new WorkerError("RECENT_CONNECTION_SAVE_FAILED", "The game is running, but recent connections could not be saved"));
+                }
+            }
+            else if (_connector.Status is Connector.ConnectionStatus.ClientExited
+                or Connector.ConnectionStatus.ConnectionFailed
+                or Connector.ConnectionStatus.Cancelled
+                or Connector.ConnectionStatus.UpdateError
+                or Connector.ConnectionStatus.NotAContentBundle)
+            {
+                _pendingRecentConnection = null;
+            }
+
             _playtimeTracker.ObserveStatus(_connector.Status);
             SendEvent("connection.progress", new
             {
@@ -976,6 +1769,12 @@ public sealed class WorkerHost
             SendEvent("update.progress", new { status = _updater.Status.ToString(), progress = _updater.Progress, speed = _updater.Speed });
             if (_updater.Status is Updater.UpdateStatus.Ready or Updater.UpdateStatus.Error)
                 SendEvent("update.completed", new { status = _updater.Status.ToString(), error = _updater.UpdateException?.Message });
+            if (_updater.Status == Updater.UpdateStatus.Ready && _lastNotificationUpdateStatus != Updater.UpdateStatus.Ready)
+            {
+                var notification = _insights.AddNotification(_login.ActiveAccountId, "game-update", "Обновление завершено", "Игровые файлы Mados Launcher готовы к запуску.");
+                SendEvent("notification.created", ToNotificationDto(notification));
+            }
+            _lastNotificationUpdateStatus = _updater.Status;
         }
     }
 
@@ -1019,6 +1818,13 @@ public sealed class WorkerHost
             : null;
     }
 
+    private static string NoteTextParameter(JsonElement parameters)
+    {
+        if (!TryGetProperty(parameters, "text", out var value) || value.ValueKind is not JsonValueKind.String)
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", "Parameter 'text' is required"));
+        return value.GetString() ?? string.Empty;
+    }
+
     private static Guid RequiredGuid(JsonElement parameters, string property)
     {
         var text = RequiredString(parameters, property);
@@ -1057,6 +1863,12 @@ public sealed class WorkerHost
         string? Mode);
 
     private sealed record NewsDto(string Title, string Link, DateTime? Date, string Source, string? Summary);
+
+    private sealed record PendingRecentConnection(
+        Guid AccountId,
+        string Address,
+        string? Name,
+        ServerStatusSnapshot? Snapshot);
 
     private sealed record WorkerError(string Code, string Message, object? Details = null);
 

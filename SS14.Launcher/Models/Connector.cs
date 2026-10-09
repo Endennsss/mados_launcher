@@ -19,6 +19,7 @@ using Splat;
 using SS14.Launcher.Models.Data;
 using SS14.Launcher.Models.EngineManager;
 using SS14.Launcher.Models.Logins;
+using SS14.Launcher.Models.ServerStatus;
 using SS14.Launcher.Utility;
 
 namespace SS14.Launcher.Models;
@@ -460,7 +461,7 @@ public partial class Connector : ObservableObject
     {
         if (!UriHelper.TryParseSs14Uri(address, out var parsedAddress))
         {
-            Log.Error("Invalid URI in GetServerInfoAsync: {Uri}", address);
+            Log.Error("Invalid URI in GetServerInfoAsync: {Uri}", PresenceAddress.SanitizeForLog(address));
             throw new ConnectException(ConnectionStatus.ConnectionFailed);
         }
 
@@ -581,7 +582,7 @@ public partial class Connector : ObservableObject
         {
             var arg = startInfo.ArgumentList[i];
 
-            commandBuilder.Append($" [{i}] {arg}");
+            commandBuilder.Append($" [{i}] {PresenceAddress.SanitizeForLog(arg)}");
         }
 
         // On Linux the Steam Overlay conflicts with OpenTK/GLFW on X11 systems with dead keys

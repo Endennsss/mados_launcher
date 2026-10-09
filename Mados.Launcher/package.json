@@ -1,6 +1,6 @@
 {
   "name": "mados-launcher",
-  "version": "0.40.2",
+  "version": "0.40.3",
   "description": "Mados Launcher for Space Station 14",
   "author": "Mados Launcher contributors",
   "main": "dist/main/main.js",
@@ -110,3 +110,4 @@
     }
   }
 }
+

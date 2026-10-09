@@ -1,0 +1,20 @@
+appId: com.mados.launcher.installer
+productName: Mados Launcher Installer
+asar: true
+files:
+  - dist/main/**/*
+  - dist/preload/**/*
+  - dist/contracts/**/*.js
+  - dist/renderer/**/*
+  - package.json
+win:
+  icon: src/renderer/assets/cat-logo.ico
+  signAndEditExecutable: false
+  target:
+    - portable
+  artifactName: Mados.Installer.Windows.${arch}.${ext}
+nsis:
+  oneClick: true
+  perMachine: false
+  runAfterFinish: false
+  deleteAppDataOnUninstall: false

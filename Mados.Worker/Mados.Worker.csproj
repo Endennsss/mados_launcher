@@ -38,6 +38,7 @@
     <PackageReference Include="Serilog.Sinks.Console" />
     <PackageReference Include="Serilog.Sinks.File" />
     <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="Tomlyn" />
     <PackageReference Include="TerraFX.Interop.Windows" />
     <PackageReference Include="NSec.Cryptography" />
     <PackageReference Include="Mono.Posix.NETStandard" />

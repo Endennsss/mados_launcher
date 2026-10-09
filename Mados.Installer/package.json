@@ -1,0 +1,69 @@
+{
+  "name": "mados-installer",
+  "version": "0.40.3",
+  "description": "Bootstrap installer for Mados Launcher",
+  "private": true,
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite --config vite.config.ts\" \"wait-on http://127.0.0.1:5174 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5174 electron .\"",
+    "build": "npm run build:main && npm run build:preload && vite build --config vite.config.ts",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:preload": "esbuild src/preload/preload.ts --bundle --platform=browser --format=cjs --target=es2022 --external:electron --outfile=dist/preload/preload.js",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "lint": "npm run typecheck",
+    "dist:dir": "npm run build && electron-builder --dir --config electron-builder.yml --config.directories.output=../artifacts/mados-installer-debug",
+    "dist": "npm run build && electron-builder --win --x64 --config electron-builder.yml --config.directories.output=../artifacts/mados-installer"
+  },
+  "dependencies": {
+    "buffer-crc32": "^1.0.0",
+    "fflate": "^0.8.2",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "yauzl": "^3.4.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@electron/asar": "^3.4.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/yauzl": "^2.10.3",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.25.12",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.4.3",
+    "vitest": "^2.1.8",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.mados.launcher.installer",
+    "productName": "Mados Launcher Installer",
+    "asar": true,
+    "files": [
+      "dist/main/**/*",
+      "dist/preload/**/*",
+      "dist/contracts/**/*.js",
+      "dist/renderer/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "src/renderer/assets/cat-logo.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        "portable"
+      ],
+      "artifactName": "Mados.Installer.Windows.${arch}.${ext}"
+    },
+    "portable": { "requestExecutionLevel": "user" }
+  }
+}
+

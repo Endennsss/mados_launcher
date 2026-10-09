@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <PackageReference Include="nunit"/>
+    <PackageReference Include="Tomlyn"/>
     <PackageReference Include="NUnit.Analyzers"/>
     <PackageReference Include="NUnit3TestAdapter"/>
     <PackageReference Include="Microsoft.NET.Test.Sdk"/>
@@ -14,6 +15,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SS14.Launcher\SS14.Launcher.csproj"/>
+    <Compile Include="..\Mados.Worker\ServerNotesStore.cs" Link="ServerNotesStore.cs" />
+    <Compile Include="..\Mados.Worker\LauncherInsightsStore.cs" Link="LauncherInsightsStore.cs" />
+    <Compile Include="..\Mados.Worker\LocalServerStore.cs" Link="LocalServerStore.cs" />
+    <Compile Include="..\Mados.Worker\LocalServerManager.cs" Link="LocalServerManager.cs" />
+    <Compile Include="..\Mados.Worker\LocalServerConfig.cs" Link="LocalServerConfig.cs" />
   </ItemGroup>
 
 </Project>

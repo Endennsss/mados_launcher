@@ -1,4 +1,4 @@
-import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { ChildProcessWithoutNullStreams, execFile, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -19,6 +19,7 @@ export class WorkerClient extends EventEmitter {
   private stopping: Promise<void> | undefined;
   private markReady!: () => void;
   private markReadyError!: (error: Error) => void;
+  private readySettled = false;
 
   public constructor() {
     super();
@@ -39,11 +40,13 @@ export class WorkerClient extends EventEmitter {
       cwd: spec.cwd,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
+      detached: process.platform !== "win32",
       env: {
         ...process.env,
         SS14_LAUNCHER_APPDATA_NAME: process.env.SS14_LAUNCHER_APPDATA_NAME ?? "launcher",
       },
     });
+    this.readySettled = false;
     let markExited!: () => void;
     this.exited = new Promise<void>((resolveExit) => { markExited = resolveExit; });
 
@@ -66,6 +69,7 @@ export class WorkerClient extends EventEmitter {
       }
     });
     this.process.on("error", (error) => {
+      this.readySettled = true;
       this.markReadyError(error);
       this.rejectAll(error);
       if (!child.pid) {
@@ -79,6 +83,7 @@ export class WorkerClient extends EventEmitter {
       if (!this.stopping) this.emit("process-error", error);
     });
     this.process.on("exit", (code, signal) => {
+      this.readySettled = true;
       const error = new Error(`Launcher worker exited (${code ?? "signal " + signal})`);
       this.markReadyError(error);
       this.rejectAll(error);
@@ -115,6 +120,12 @@ export class WorkerClient extends EventEmitter {
     const child = this.process;
     if (!child) return;
     let deadline: ReturnType<typeof setTimeout> | undefined;
+    if (!this.readySettled) {
+      await terminateProcessTree(child);
+      await Promise.race([this.exited, new Promise<void>((resolveTimeout) => { deadline = setTimeout(resolveTimeout, 2_000); })]);
+      clearTimeout(deadline);
+      return;
+    }
     try {
       await Promise.race([
         (async () => {
@@ -123,7 +134,7 @@ export class WorkerClient extends EventEmitter {
           // has to close databases, its Loader pipe, and log files.
           await this.exited;
         })(),
-        new Promise<void>((resolveTimeout) => { deadline = setTimeout(resolveTimeout, 3_000); }),
+        new Promise<void>((resolveTimeout) => { deadline = setTimeout(resolveTimeout, 20_000); }),
       ]);
     } catch {
       // The process may already be gone during application shutdown.
@@ -133,11 +144,11 @@ export class WorkerClient extends EventEmitter {
     // Capture the child before awaiting: its exit handler may already have
     // cleared this.process by the time the shutdown response is handled.
     if (this.process === child) {
-      child.kill();
+      await terminateProcessTree(child);
       try {
         await Promise.race([
           this.exited,
-          new Promise<void>((resolveTimeout) => { deadline = setTimeout(resolveTimeout, 1_000); }),
+          new Promise<void>((resolveTimeout) => { deadline = setTimeout(resolveTimeout, 2_000); }),
         ]);
       } finally {
         clearTimeout(deadline);
@@ -150,7 +161,7 @@ export class WorkerClient extends EventEmitter {
     try {
       parsed = JSON.parse(line);
     } catch {
-      console.error("[mados-worker] received invalid JSON", line);
+      console.error("[mados-worker] received invalid JSON");
       return;
     }
 
@@ -158,7 +169,10 @@ export class WorkerClient extends EventEmitter {
     if (event.success) {
       const value = event.data as WorkerEvent;
       this.emit("event", value);
-      if (value.event === "app.ready") this.markReady();
+      if (value.event === "app.ready") {
+        this.readySettled = true;
+        this.markReady();
+      }
       return;
     }
 
@@ -185,6 +199,21 @@ export class WorkerClient extends EventEmitter {
   private rejectAll(error: Error): void {
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
+  }
+}
+
+async function terminateProcessTree(child: ChildProcessWithoutNullStreams): Promise<void> {
+  if (!child.pid) return;
+  if (process.platform === "win32") {
+    await new Promise<void>((resolveDone) => {
+      execFile("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, timeout: 5000 }, () => resolveDone());
+    });
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") child.kill("SIGKILL");
   }
 }
 

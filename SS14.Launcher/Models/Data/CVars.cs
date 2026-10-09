@@ -116,6 +116,11 @@ public static class CVars
     public static readonly CVarDef<bool> DiscordPresenceShowNickname = CVarDef.Create("DiscordPresenceShowNickname", true);
 
     /// <summary>
+    /// Show an in-launcher notification when a favorite server returns online.
+    /// </summary>
+    public static readonly CVarDef<bool> FavoriteAvailabilityNotifications = CVarDef.Create("FavoriteAvailabilityNotifications", true);
+
+    /// <summary>
     /// Stores the minimum player count value used by the "minimum player count" filter.
     /// </summary>
     /// <seealso cref="ServerFilter.PlayerCountMin"/>
