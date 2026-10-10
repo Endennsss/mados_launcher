@@ -3,12 +3,26 @@ import { mkdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { crc32 } from "node:zlib";
 import yauzl from "yauzl";
 import { InstallerFailure, type InstallerStage } from "../contracts/installer";
 
 const MAX_UNCOMPRESSED_BYTES = 4 * 1024 ** 3;
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) value = (value & 1) === 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  return value >>> 0;
+});
+
+class Crc32 {
+  private value = 0xffffffff;
+
+  update(chunk: Buffer): void {
+    for (const byte of chunk) this.value = CRC_TABLE[(this.value ^ byte) & 0xff] ^ (this.value >>> 8);
+  }
+
+  digest(): number { return (this.value ^ 0xffffffff) >>> 0; }
+}
 
 export function validateArchiveEntry(entryName: string, isSymlink: boolean): string {
   if (isSymlink) throw new InstallerFailure("ZIP_SYMLINK", "Архив содержит символическую ссылку", false);
@@ -80,10 +94,10 @@ export async function extractArchive(
       await mkdir(dirname(target), { recursive: true });
       const input = await new Promise<Readable>((resolve, reject) =>
         zip!.openReadStream(entry, (error, stream) => error ? reject(error) : resolve(stream!)));
-      let checksum = 0;
+      const checksum = new Crc32();
       const verify = new Transform({
-        transform(chunk: Buffer, _encoding, callback) { checksum = crc32(chunk, checksum); callback(null, chunk); },
-        flush(callback) { callback(checksum === entry.crc32 ? null : new InstallerFailure("ZIP_CRC", "ZIP повреждён. Скачайте сборку повторно.", true)); },
+        transform(chunk: Buffer, _encoding, callback) { checksum.update(chunk); callback(null, chunk); },
+        flush(callback) { callback(checksum.digest() === entry.crc32 ? null : new InstallerFailure("ZIP_CRC", "ZIP повреждён. Скачайте сборку повторно.", true)); },
       });
       await pipeline(input, verify, createWriteStream(target, { flags: "wx" }), { signal });
     }

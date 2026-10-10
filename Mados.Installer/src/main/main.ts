@@ -63,7 +63,7 @@ async function requestQuit(): Promise<void> {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 740, height: 580, minWidth: 620, minHeight: 520,
+    width: 860, height: 700, minWidth: 760, minHeight: 620,
     frame: false, transparent: true, resizable: false, show: false, backgroundColor: "#00000000",
     icon: join(__dirname, "../renderer/assets/cat-logo.ico"),
     webPreferences: { preload: join(__dirname, "../preload/preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false },
