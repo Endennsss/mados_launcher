@@ -10,6 +10,9 @@ import { prepareDataMigration } from "./data-migration";
 import { containsDeepLink } from "./deep-link";
 import { WorkerClient } from "./worker-client";
 
+const WINDOWS_APP_USER_MODEL_ID = "com.mados.launcher";
+if (process.platform === "win32") app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
+
 let windowRef: BrowserWindow | undefined;
 let shuttingDown = false;
 let shutdownComplete = false;
@@ -98,6 +101,7 @@ function createWindow(): BrowserWindow {
     roundedCorners: true,
     backgroundColor: "#00000000",
     title: "Mados Launcher",
+    icon: join(__dirname, "../renderer/favicon.ico"),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
     webPreferences: {
       preload: join(__dirname, "../preload/preload.js"),

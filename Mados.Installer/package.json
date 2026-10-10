@@ -11,34 +11,35 @@
     "build:preload": "esbuild src/preload/preload.ts --bundle --platform=browser --format=cjs --target=es2022 --external:electron --outfile=dist/preload/preload.js",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "vitest run --config vitest.config.ts",
+    "test:electron": "npm run build:main && node scripts/electron-extract-smoke.cjs",
     "lint": "npm run typecheck",
     "dist:dir": "npm run build && electron-builder --dir --config electron-builder.yml --config.directories.output=../artifacts/mados-installer-debug",
     "dist": "npm run build && electron-builder --win --x64 --config electron-builder.yml --config.directories.output=../artifacts/mados-installer"
   },
   "dependencies": {
-    "buffer-crc32": "^1.0.0",
-    "fflate": "^0.8.2",
-    "lucide-react": "^0.468.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
     "yauzl": "^3.4.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@electron/asar": "^3.4.1",
-    "@vitejs/plugin-react": "^4.3.4",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/yauzl": "^2.10.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "buffer-crc32": "^1.0.0",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
     "esbuild": "^0.25.12",
+    "fflate": "^0.8.3",
     "jsdom": "^25.0.1",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "typescript": "^5.7.2",
     "vite": "^6.4.3",
     "vitest": "^2.1.8",
@@ -48,11 +49,29 @@
     "appId": "com.mados.launcher.installer",
     "productName": "Mados Launcher Installer",
     "asar": true,
+    "compression": "maximum",
+    "electronLanguages": ["en-US"],
     "files": [
       "dist/main/**/*",
+      "!dist/main/**/*.map",
+      "!dist/main/**/*.test.js",
+      "!dist/main/**/*.test.js.map",
       "dist/preload/**/*",
+      "!dist/preload/**/*.map",
       "dist/contracts/**/*.js",
+      "!dist/contracts/**/*.test.js",
       "dist/renderer/**/*",
+      "!dist/renderer/**/*.map",
+      "!node_modules/**/*.d.ts",
+      "!node_modules/**/*.d.cts",
+      "!node_modules/**/*.d.mts",
+      "!node_modules/**/*.map",
+      "!node_modules/**/README*",
+      "!node_modules/**/CHANGELOG*",
+      "!node_modules/**/src/**",
+      "!node_modules/**/test.js",
+      "!node_modules/**/test/**",
+      "!node_modules/**/tests/**",
       "package.json"
     ],
     "win": {
@@ -63,7 +82,8 @@
       ],
       "artifactName": "Mados.Installer.Windows.${arch}.${ext}"
     },
-    "portable": { "requestExecutionLevel": "user" }
+    "portable": {
+      "requestExecutionLevel": "user"
+    }
   }
 }
-

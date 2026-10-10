@@ -1,5 +1,4 @@
-import { createWriteStream } from "node:fs";
-import { mkdir, rm, stat } from "node:fs/promises";
+import { fs, fsp } from "./fs-compat";
 import { dirname, join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -81,7 +80,7 @@ export async function extractArchive(
   cancelled(signal);
   onStage("extracting");
   // Must be a new directory owned by this operation. Never delete existing paths.
-  await mkdir(stagingPath);
+  await fsp.mkdir(stagingPath);
   let zip: yauzl.ZipFile | null = null;
   try {
     zip = await openArchive(zipPath);
@@ -90,8 +89,8 @@ export async function extractArchive(
       cancelled(signal);
       const name = validateArchiveEntry(entry.fileName, false);
       const target = join(stagingPath, name);
-      if (entry.fileName.endsWith("/")) { await mkdir(target, { recursive: true }); continue; }
-      await mkdir(dirname(target), { recursive: true });
+      if (entry.fileName.endsWith("/")) { await fsp.mkdir(target, { recursive: true }); continue; }
+      await fsp.mkdir(dirname(target), { recursive: true });
       const input = await new Promise<Readable>((resolve, reject) =>
         zip!.openReadStream(entry, (error, stream) => error ? reject(error) : resolve(stream!)));
       const checksum = new Crc32();
@@ -99,15 +98,15 @@ export async function extractArchive(
         transform(chunk: Buffer, _encoding, callback) { checksum.update(chunk); callback(null, chunk); },
         flush(callback) { callback(checksum.digest() === entry.crc32 ? null : new InstallerFailure("ZIP_CRC", "ZIP повреждён. Скачайте сборку повторно.", true)); },
       });
-      await pipeline(input, verify, createWriteStream(target, { flags: "wx" }), { signal });
+      await pipeline(input, verify, fs.createWriteStream(target, { flags: "wx" }), { signal });
     }
     const executable = join(stagingPath, "Mados Launcher.exe");
-    if (!(await stat(executable).catch(() => null))?.isFile()) {
+    if (!(await fsp.stat(executable).catch(() => null))?.isFile()) {
       throw new InstallerFailure("INSTALL_EXECUTABLE", "В ZIP не найден Mados Launcher.exe", false);
     }
     return executable;
   } catch (error) {
-    await rm(stagingPath, { recursive: true, force: true });
+    await fsp.rm(stagingPath, { recursive: true, force: true });
     cancelled(signal);
     if (error instanceof InstallerFailure) throw error;
     throw new InstallerFailure("ZIP_INVALID", "Не удалось проверить или распаковать ZIP-сборку", true);

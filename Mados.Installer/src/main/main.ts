@@ -1,9 +1,14 @@
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from "electron";
+import { mkdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { INSTALLER_METHODS, installDirectorySchema, InstallerFailure, type InstallerError, type InstallerMethod } from "../contracts/installer";
 import { getDefaultInstallDirectory, InstallerService } from "./installer-service";
 import { validateInstallDirectory } from "./path-policy";
+import { createWindowsShortcuts } from "./shortcuts";
+
+const WINDOWS_APP_USER_MODEL_ID = "com.mados.launcher.installer";
+if (process.platform === "win32") app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
 
 let mainWindow: BrowserWindow | null = null;
 let lastInstalledDirectory: string | null = null;
@@ -65,7 +70,7 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 860, height: 700, minWidth: 760, minHeight: 620,
     frame: false, transparent: true, resizable: false, show: false, backgroundColor: "#00000000",
-    icon: join(__dirname, "../renderer/assets/cat-logo.ico"),
+    icon: join(__dirname, "../renderer/favicon.ico"),
     webPreferences: { preload: join(__dirname, "../preload/preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false },
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -113,6 +118,16 @@ handle("install.start", async (directory) => {
     progress: (progress) => send("installer.progress", progress),
     error: (error) => send("installer.error", error),
   });
+  if (process.platform === "win32") {
+    const shortcutResult = await createWindowsShortcuts({
+      desktopDirectory: app.getPath("desktop"),
+      appDataDirectory: app.getPath("appData"),
+      executablePath: join(selected, "Mados Launcher.exe"),
+      makeDirectory: async (path) => { await mkdir(path, { recursive: true }); },
+      writeShortcut: (path, operation, options) => shell.writeShortcutLink(path, operation, options),
+    });
+    if (shortcutResult.failed.length > 0) console.warn("Mados Launcher: some shortcuts could not be created", shortcutResult.failed);
+  }
   lastInstalledDirectory = selected;
   setTimeout(() => { if (!installerService.isBusy) void requestQuit(); }, 2200);
 });

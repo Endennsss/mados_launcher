@@ -1,11 +1,30 @@
 appId: com.mados.launcher.installer
 productName: Mados Launcher Installer
 asar: true
+compression: maximum
+electronLanguages:
+  - en-US
 files:
   - dist/main/**/*
+  - '!dist/main/**/*.map'
+  - '!dist/main/**/*.test.js'
+  - '!dist/main/**/*.test.js.map'
   - dist/preload/**/*
+  - '!dist/preload/**/*.map'
   - dist/contracts/**/*.js
+  - '!dist/contracts/**/*.test.js'
   - dist/renderer/**/*
+  - '!dist/renderer/**/*.map'
+  - '!node_modules/**/*.d.ts'
+  - '!node_modules/**/*.d.cts'
+  - '!node_modules/**/*.d.mts'
+  - '!node_modules/**/*.map'
+  - '!node_modules/**/README*'
+  - '!node_modules/**/CHANGELOG*'
+  - '!node_modules/**/src/**'
+  - '!node_modules/**/test.js'
+  - '!node_modules/**/test/**'
+  - '!node_modules/**/tests/**'
   - package.json
 win:
   icon: src/renderer/assets/cat-logo.ico
