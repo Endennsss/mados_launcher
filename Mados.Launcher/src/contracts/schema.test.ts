@@ -16,6 +16,26 @@ describe("Mados worker contract", () => {
     expect(workerEventSchema.parse({ v: 1, event: "app.ready", data: {} }).event).toBe("app.ready");
   });
 
+  it("validates shell update states and progress bounds", () => {
+    const event = {v:1,event:"shell.updateState",data:{status:"downloading",currentVersion:"0.40.3",version:"0.41.0",revision:2,percent:50}};
+    expect(workerEventSchema.safeParse(event).success).toBe(true);
+    expect(workerEventSchema.safeParse({...event,data:{...event.data,percent:120}}).success).toBe(false);
+    expect(workerEventSchema.safeParse({...event,data:{...event.data,revision:-1}}).success).toBe(false);
+  });
+
+  it("accepts progressive catalogs and rejects malformed refresh metadata", () => {
+    const data = { servers: [], failedHubs: [], partialError: false, revision: 4, refreshing: true, stale: false };
+    expect(workerEventSchema.safeParse({ v: 1, event: "servers.updated", data }).success).toBe(true);
+    expect(workerEventSchema.safeParse({ v: 1, event: "servers.updated", data: { ...data, revision: -1 } }).success).toBe(false);
+    expect(workerEventSchema.safeParse({ v: 1, event: "servers.updated", data: { ...data, refreshing: "yes" } }).success).toBe(false);
+  });
+
+  it("requires account-scoped monitoring failures with a safe display message", () => {
+    const event = { v: 1, event: "monitoring.failed", data: { accountId: "account-a", message: "Refresh failed", favorites: [] } };
+    expect(workerEventSchema.safeParse(event).success).toBe(true);
+    expect(workerEventSchema.safeParse({ ...event, data: { message: "Refresh failed" } }).success).toBe(false);
+  });
+
   it("validates the structured presence event", () => {
     expect(presenceSnapshotSchema.parse({
       state: "playing",

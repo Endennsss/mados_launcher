@@ -59,12 +59,55 @@
     "updates": ["getStatus", "start"],
     "connection": ["cancel", "confirmPrivacyPolicy"]
   },
+  "x-shell-channels": ["get-update-state", "check-for-updates", "download-update", "install-update"],
   "x-events": [
+    "shell.updateState",
     "app.ready", "app.startup", "app.error", "auth.changed", "servers.updated", "connection.started",
     "connection.progress", "connection.completed", "connection.failed", "update.progress",
-    "update.completed", "deepLink.received", "playtime.updated", "recentConnections.updated", "presence.updated", "settings.changed", "monitoring.updated", "notification.created", "launchProfiles.updated", "cdn.progress", "cdn.completed", "cdn.failed", "localServer.status", "localServer.log", "localServer.configChanged", "localServer.error"
+    "update.completed", "deepLink.received", "playtime.updated", "recentConnections.updated", "presence.updated", "settings.changed", "monitoring.updated", "monitoring.failed", "notification.created", "launchProfiles.updated", "cdn.progress", "cdn.completed", "cdn.failed", "localServer.status", "localServer.log", "localServer.configChanged", "localServer.error"
   ],
   "x-event-payloads": {
+    "shell.updateState": {
+      "description": "Electron-owned update state; installation only after an explicit user action. Monotonic revision prevents stale renderer snapshots.",
+      "type": "object",
+      "required": ["status", "currentVersion", "revision"],
+      "properties": {
+        "status": { "enum": ["idle", "checking", "available", "downloading", "downloaded", "error", "disabled"] },
+        "currentVersion": { "type": "string" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "version": { "type": "string" },
+        "percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "message": { "type": "string" },
+        "checkedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "connection.started": {
+      "description": "A server connection supplies a sanitized address and optional display name. Bundles supply a filename and contentBundle instead.",
+      "type": "object",
+      "properties": {
+        "address": { "type": ["string", "null"] },
+        "name": { "type": ["string", "null"] },
+        "reason": { "type": ["string", "null"] },
+        "path": { "type": "string" },
+        "contentBundle": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "servers.updated": {
+      "description": "Also returned by servers.list and servers.refresh. Lists are usable while refreshing is true. Clients ignore revisions older than or equal to their current snapshot. Stale marks a retained list when all hubs fail.",
+      "type": "object",
+      "required": ["servers", "failedHubs", "partialError"],
+      "properties": {
+        "servers": { "type": "array", "items": { "type": "object" } },
+        "failedHubs": { "type": "array", "items": { "type": "string" } },
+        "partialError": { "type": "boolean" },
+        "revision": { "type": "integer", "minimum": 0 },
+        "refreshing": { "type": "boolean" },
+        "stale": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "app.startup": {
       "type": "object",
       "required": ["stage"],
@@ -113,6 +156,12 @@
       "type": "object",
       "required": ["accountId", "favorites"],
       "properties": { "accountId": { "type": "string" }, "favorites": { "type": "array" } },
+      "additionalProperties": false
+    },
+    "monitoring.failed": {
+      "type": "object",
+      "required": ["accountId", "message"],
+      "properties": { "accountId": { "type": "string" }, "message": { "type": "string" }, "favorites": { "type": ["array", "null"] } },
       "additionalProperties": false
     },
     "notification.created": {

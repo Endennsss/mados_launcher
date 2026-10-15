@@ -68,6 +68,10 @@ public sealed class WorkerHost
     private readonly LocalServerManager _localServers;
     private readonly object _serverSnapshotLock = new();
     private readonly Dictionary<string, ServerStatusSnapshot> _serverSnapshots = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ServerCatalogCache _catalog;
+    private readonly List<Task> _catalogMonitoring = [];
+    private readonly Dictionary<Guid, Task<ServerCatalogResult>> _lastMonitoredCatalog = [];
+    private readonly FavoriteMonitoringQueue _monitoringQueue = new();
     private WorkerCommandBridge? _legacyBridge;
     private string? _pendingLegacyReason;
 
@@ -95,6 +99,7 @@ public sealed class WorkerHost
         _recentConnections = new RecentConnectionStore();
         _serverNotes = new ServerNotesStore();
         _insights = new LauncherInsightsStore();
+        _catalog = new ServerCatalogCache(_http, CatalogOnUpdated);
         _localServerStore = new LocalServerStore();
         // CDN downloads use a separate no-redirect client. LocalServerManager
         // validates every resolved address so a public URL cannot pivot into a
@@ -172,7 +177,7 @@ public sealed class WorkerHost
                 using var request = JsonDocument.Parse(line);
                 background = request.RootElement.TryGetProperty("method", out var method)
                     && method.ValueKind == JsonValueKind.String
-                    && method.GetString() is "tools.cdn.import" or "localServers.create" or "localServers.start" or "localServers.restart";
+                    && method.GetString() is "tools.cdn.import" or "localServers.create" or "localServers.start" or "localServers.restart" or "servers.info";
             }
             catch (JsonException) { /* HandleLineAsync returns the protocol error. */ }
             if (background)
@@ -185,6 +190,8 @@ public sealed class WorkerHost
 
         _shutdown.Cancel();
         lock (_cdnLock) _cdnCancellation?.Cancel();
+        await _catalog.DisposeAsync();
+        await Task.WhenAll(_catalogMonitoring);
         await Task.WhenAll(backgroundRequests);
         _connectionCancellation?.Cancel();
         _presence.Dispose();
@@ -311,8 +318,8 @@ public sealed class WorkerHost
             "auth.login" => await LoginAsync(parameters),
             "auth.logout" => await LogoutAsync(parameters),
             "auth.switchAccount" => SwitchAccount(parameters),
-            "servers.list" => await GetServersAsync(false),
-            "servers.refresh" => await GetServersAsync(true),
+            "servers.list" => GetServers(false),
+            "servers.refresh" => GetServers(true),
             "servers.info" => await GetServerInfoAsync(parameters),
             "favorites.list" => GetFavorites(),
             "favorites.add" => AddFavorite(parameters),
@@ -358,17 +365,14 @@ public sealed class WorkerHost
             "connection.cancel" => CancelConnection(),
             "connection.confirmPrivacyPolicy" => ConfirmPrivacyPolicy(parameters),
             "content.openBundle" => StartContentBundle(parameters),
-            "updates.getStatus" => await GetUpdateStatusAsync(),
+            "updates.getStatus" => GetUpdateStatus(),
             "updates.start" => StartUpdate(parameters),
             _ => throw new WorkerRpcException(new WorkerError("METHOD_NOT_FOUND", $"Unknown worker method: {method}"))
         };
     }
 
-    private async Task<object> GetStateAsync()
+    private Task<object> GetStateAsync()
     {
-        await _launcherInfo.LoadTask;
-        var allowedVersions = _launcherInfo.Model?.AllowedVersions ?? Array.Empty<string>();
-        var currentVersion = ConfigConstants.CurrentLauncherVersion;
         var processor = LauncherDiagnostics.GetProcessorModel();
         var intelWarning = processor.Contains("Intel", StringComparison.OrdinalIgnoreCase)
             && Regex.IsMatch(processor, @"i\d+-1[34]\d+(?:[A-Z]+)?(?:\s|$)", RegexOptions.IgnoreCase)
@@ -376,7 +380,7 @@ public sealed class WorkerHost
             && !processor.EndsWith("P", StringComparison.OrdinalIgnoreCase)
             && !processor.EndsWith("U", StringComparison.OrdinalIgnoreCase)
             && !_data.GetCVar(CVars.HasDismissedIntelDegradation);
-        return new
+        return Task.FromResult<object>(new
         {
             ready = true,
             loggedIn = _login.ActiveAccount != null,
@@ -386,7 +390,9 @@ public sealed class WorkerHost
             version = LauncherVersion.Version?.ToString() ?? "unknown",
             compatibility = new
             {
-                outOfDate = _launcherInfo.Model != null && Array.IndexOf(allowedVersions, currentVersion) == -1,
+                // Kept for older IPC consumers. Mados shell updates are owned
+                // by Electron/GitHub, not the official launcher's allowlist.
+                outOfDate = false,
                 earlyAccess = !_data.GetCVar(CVars.HasDismissedEarlyAccessWarning),
                 intelDegradation = intelWarning,
                 rosetta = OperatingSystem.IsMacOS()
@@ -395,7 +401,7 @@ public sealed class WorkerHost
                 authOverride = ConfigConstants.IsAuthOverride
             },
             discord = GetDiscordSettings()
-        };
+        });
     }
 
     private object GetAccounts()
@@ -489,71 +495,75 @@ public sealed class WorkerHost
         return GetAccountDto(_login.ActiveAccount)!;
     }
 
-    private async Task<object> GetServersAsync(bool refreshMonitoring)
+    private ServerCatalogResult GetServers(bool refreshMonitoring)
     {
-        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        var servers = new Dictionary<string, ServerDto>(StringComparer.OrdinalIgnoreCase);
-        var failedHubs = new List<string>();
-
         var hubs = ConfigConstants.DefaultHubUrls
-            .Select(h => (Set: h, Display: h.Urls[0]))
-            .Concat(_data.Hubs.OrderBy(h => h.Priority).Select(h => (Set: UrlFallbackSet.FromSingle(h.Address), Display: h.Address.AbsoluteUri)))
+            .Select(h => new ServerCatalogHub(h, h.Urls[0]))
+            .Concat(_data.Hubs.OrderBy(h => h.Priority).Select(h => new ServerCatalogHub(UrlFallbackSet.FromSingle(h.Address), h.Address.AbsoluteUri)))
             .ToArray();
-
-        foreach (var (hub, display) in hubs)
+        var result = _catalog.Get(hubs, refreshMonitoring);
+        if (refreshMonitoring && _login.ActiveAccountId is { } accountId)
         {
-            try
+            var refresh = _catalog.Completion;
+            if (!_lastMonitoredCatalog.TryGetValue(accountId, out var lastRefresh) || lastRefresh != refresh)
             {
-                var entries = await _hub.GetServers(hub, cancel.Token);
-                foreach (var entry in entries)
+                _lastMonitoredCatalog[accountId] = refresh;
+                var favorites = _data.FavoriteServers.Items.Select(f => new FavoriteMonitorTarget(f.Address, f.Name)).ToArray();
+                var notify = _data.GetCVar(CVars.FavoriteAvailabilityNotifications);
+                _catalogMonitoring.RemoveAll(task => task.IsCompleted);
+                _catalogMonitoring.Add(CompleteCatalogMonitoringAsync(refresh, accountId, favorites, notify));
+            }
+        }
+        return result;
+    }
+
+    private async Task CompleteCatalogMonitoringAsync(Task<ServerCatalogResult> refresh, Guid accountId,
+        FavoriteMonitorTarget[] favorites, bool notify)
+    {
+        try
+        {
+            await _monitoringQueue.RunAsync(async () =>
+            {
+                // Reserve the queue before waiting for the catalog so later
+                // manual probes cannot write ahead of this refresh.
+                try
                 {
-                    if (servers.ContainsKey(entry.Address))
-                        continue;
-
-                    var status = entry.StatusData;
-                    var parsedStatus = ServerStatusSnapshot.FromStatus(status, null);
-                    servers[entry.Address] = new ServerDto(
-                        entry.Address,
-                        parsedStatus.Name,
-                        parsedStatus.PlayerCount,
-                        parsedStatus.SoftMaxPlayerCount,
-                        parsedStatus.RoundStartTime,
-                        parsedStatus.RunLevel,
-                        parsedStatus.Tags,
-                        "online",
-                        display,
-                        null,
-                        parsedStatus.Language,
-                        parsedStatus.Map,
-                        parsedStatus.Mode);
+                    var result = await refresh;
+                    _shutdown.Token.ThrowIfCancellationRequested();
+                    // Failed hubs must not turn cached entries into new samples.
+                    return await RefreshMonitoringCoreAsync(accountId, favorites, notify, result.Stale ? [] : result.Servers);
                 }
-            }
-            catch (Exception e)
-            {
-                failedHubs.Add(display);
-                Log.Warning(e, "Failed to fetch hub server list from {Hub}", display);
-            }
+                catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { throw; }
+                catch (Exception error)
+                {
+                    Log.Warning(error, "Favorite monitoring after catalog refresh failed");
+                    object? partial = null;
+                    try
+                    {
+                        partial = _insights.GetFavoriteSummaries(accountId, favorites).Select(ToFavoriteMonitorDto).ToArray();
+                    }
+                    catch (Exception readError)
+                    {
+                        Log.Warning(readError, "Could not read partial favorite monitoring results");
+                    }
+                    if (_login.ActiveAccountId == accountId)
+                        SendEvent("monitoring.failed", new
+                        {
+                            accountId, favorites = partial,
+                            message = "Не удалось обновить все избранные серверы. Сохранённые данные доступны; попробуйте обновить ещё раз."
+                        });
+                    return new { ok = false };
+                }
+            }, _shutdown.Token);
         }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+    }
 
-        // Probe each server independently. Measuring the hub request once and
-        // copying that duration to every entry makes all cards show the same
-        // number even when the servers are in different regions.
-        using (var pingGate = new SemaphoreSlim(12, 12))
-        {
-            var pingTasks = servers.Values
-                .Select(server => MeasureServerPingAsync(server.Address, pingGate, cancel.Token))
-                .ToArray();
-            var pingResults = await Task.WhenAll(pingTasks);
-            foreach (var pingResult in pingResults)
-            {
-                if (servers.TryGetValue(pingResult.Address, out var server))
-                    servers[pingResult.Address] = server with { PingMs = pingResult.PingMs };
-            }
-        }
-
+    private void CatalogOnUpdated(ServerCatalogResult result)
+    {
         lock (_serverSnapshotLock)
         {
-            foreach (var server in servers.Values)
+            foreach (var server in result.Servers)
             {
                 _serverSnapshots[PresenceAddress.Sanitize(server.Address) ?? server.Address] = new ServerStatusSnapshot(
                     server.Name,
@@ -568,37 +578,7 @@ public sealed class WorkerHost
                     server.Mode);
             }
         }
-
-        var result = new
-        {
-            servers = servers.Values.ToArray(),
-            failedHubs,
-            partialError = failedHubs.Count > 0 && servers.Count > 0
-        };
         SendEvent("servers.updated", result);
-        if (refreshMonitoring && _login.ActiveAccountId is not null)
-            await RefreshMonitoringAsync(servers.Values);
-        return result;
-    }
-
-    private async Task<(string Address, long? PingMs)> MeasureServerPingAsync(string address, SemaphoreSlim gate, CancellationToken cancel)
-    {
-        var entered = false;
-        try
-        {
-            await gate.WaitAsync(cancel);
-            entered = true;
-            return (address, await ServerPingProbe.MeasureAsync(_http, address, cancel));
-        }
-        catch (OperationCanceledException)
-        {
-            return (address, null);
-        }
-        finally
-        {
-            if (entered)
-                gate.Release();
-        }
     }
 
     private async Task<object> GetServerInfoAsync(JsonElement parameters)
@@ -615,9 +595,11 @@ public sealed class WorkerHost
 
         try
         {
-            using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var cancel = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+            cancel.CancelAfter(TimeSpan.FromSeconds(10));
             var infoTask = _hub.GetServerInfo(address, hubAddress, cancel.Token);
             var statusTask = ServerStatusProbe.FetchAsync(_http, address, cancel.Token);
+            await Task.WhenAll(infoTask, statusTask);
             var info = await infoTask;
             var status = await statusTask;
             return new
@@ -972,20 +954,29 @@ public sealed class WorkerHost
         };
     }
 
-    private async Task<object> RefreshMonitoringAsync(IEnumerable<ServerDto>? catalog = null)
+    private Task<object> RefreshMonitoringAsync()
     {
         var accountId = RequireActiveInsightsAccount();
         var favoriteTargets = _data.FavoriteServers.Items
             .Select(f => new FavoriteMonitorTarget(f.Address, f.Name))
             .ToArray();
+        var notify = _data.GetCVar(CVars.FavoriteAvailabilityNotifications);
+        return _monitoringQueue.RunAsync(() => RefreshMonitoringCoreAsync(accountId, favoriteTargets, notify), _shutdown.Token);
+    }
+
+    private async Task<object> RefreshMonitoringCoreAsync(Guid accountId, FavoriteMonitorTarget[] favoriteTargets,
+        bool notify, IEnumerable<ServerCatalogEntry>? catalog = null)
+    {
         var catalogByAddress = catalog?
             .Select(server => (server, address: LauncherInsightsStore.NormalizeAddress(server.Address)))
             .GroupBy(item => item.address, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First().server, StringComparer.OrdinalIgnoreCase);
-        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
+        cancel.CancelAfter(TimeSpan.FromSeconds(15));
 
         foreach (var favorite in favoriteTargets)
         {
+            _shutdown.Token.ThrowIfCancellationRequested();
             string normalizedAddress;
             try
             {
@@ -1023,8 +1014,8 @@ public sealed class WorkerHost
                     snapshot?.PingMs,
                     snapshot?.Map,
                     snapshot?.Mode),
-                _data.GetCVar(CVars.FavoriteAvailabilityNotifications));
-            if (write.Notification is { } notification)
+                notify);
+            if (write.Notification is { } notification && _login.ActiveAccountId == accountId)
             {
                 SendEvent("notification.created", ToNotificationDto(notification));
             }
@@ -1035,7 +1026,7 @@ public sealed class WorkerHost
             accountId,
             favorites = _insights.GetFavoriteSummaries(accountId, favoriteTargets).Select(ToFavoriteMonitorDto).ToArray()
         };
-        SendEvent("monitoring.updated", result);
+        if (_login.ActiveAccountId == accountId) SendEvent("monitoring.updated", result);
         return result;
     }
 
@@ -1562,13 +1553,13 @@ public sealed class WorkerHost
             : null;
         _connectionCancellation?.Dispose();
         _connectionCancellation = new CancellationTokenSource();
-        _connectionTask = ObserveConnectionAsync(address, reason, _connectionCancellation.Token);
+        _connectionTask = ObserveConnectionAsync(address, reason, _connectionCancellation.Token, serverName);
         return new { started = true, address = PresenceAddress.Sanitize(address), reason, name = serverName };
     }
 
-    private async Task ObserveConnectionAsync(string address, string? reason, CancellationToken cancel)
+    private async Task ObserveConnectionAsync(string address, string? reason, CancellationToken cancel, string? serverName = null)
     {
-        SendEvent("connection.started", new { address = PresenceAddress.Sanitize(address), reason });
+        SendEvent("connection.started", new { address = PresenceAddress.Sanitize(address), name = serverName, reason });
         try
         {
             await _connector.ConnectAsync(address, cancel);
@@ -1662,13 +1653,10 @@ public sealed class WorkerHost
         return new { accepted = true, uri = PresenceAddress.Sanitize(uri) };
     }
 
-    private async Task<object> GetUpdateStatusAsync()
+    private object GetUpdateStatus()
     {
-        await _launcherInfo.LoadTask;
-        var model = _launcherInfo.Model;
-        var current = ConfigConstants.CurrentLauncherVersion;
-        var outOfDate = model != null && Array.IndexOf(model.AllowedVersions, current) == -1;
-        return new { currentVersion = current, outOfDate, allowedVersions = model?.AllowedVersions ?? Array.Empty<string>() };
+        return new { currentVersion = LauncherVersion.Version?.ToString() ?? "unknown", outOfDate = false,
+            allowedVersions = Array.Empty<string>(), managedBy = "electron", source = "github" };
     }
 
     private object StartUpdate(JsonElement parameters)
@@ -1846,21 +1834,6 @@ public sealed class WorkerHost
         value = default;
         return false;
     }
-
-    private sealed record ServerDto(
-        string Address,
-        string? Name,
-        int PlayerCount,
-        int SoftMaxPlayerCount,
-        string? RoundStartTime,
-        string? RunLevel,
-        string[] Tags,
-        string Status,
-        string HubAddress,
-        long? PingMs,
-        string? Language,
-        string? Map,
-        string? Mode);
 
     private sealed record NewsDto(string Title, string Link, DateTime? Date, string Source, string? Summary);
 

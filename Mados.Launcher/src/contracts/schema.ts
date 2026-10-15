@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ShellUpdateState } from "./launcher";
 
 export const workerRequestSchema = z.object({
   v: z.literal(1),
@@ -152,10 +153,38 @@ export const workerResponseSchema = z.object({
   }).optional(),
 });
 
+export const serverListResultSchema = z.object({
+  servers: z.array(z.object({
+    address: z.string(), name: z.string().nullable(),
+    playerCount: z.number().int().nonnegative(), softMaxPlayerCount: z.number().int().nonnegative(),
+    tags: z.array(z.string()), status: z.string(), hubAddress: z.string(),
+    pingMs: z.number().nonnegative().nullable().optional(),
+  }).passthrough()),
+  failedHubs: z.array(z.string()),
+  partialError: z.boolean(),
+  revision: z.number().int().nonnegative().optional(),
+  refreshing: z.boolean().optional(),
+  stale: z.boolean().optional(),
+});
+
+export const shellUpdateStateSchema: z.ZodType<ShellUpdateState> = z.object({
+  status: z.enum(["idle", "checking", "available", "downloading", "downloaded", "error", "disabled"]),
+  currentVersion: z.string(), revision: z.number().int().nonnegative(),
+  version: z.string().optional(), percent: z.number().min(0).max(100).optional(),
+  message: z.string().optional(), checkedAt: z.string().datetime().optional(),
+}).strict();
+
 export const workerEventSchema = z.object({
   v: z.literal(1),
   event: z.string(),
   data: z.unknown(),
+}).superRefine((value, context) => {
+  if (value.event === "shell.updateState" && !shellUpdateStateSchema.safeParse(value.data).success)
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid shell update", path: ["data"] });
+  if (value.event === "servers.updated" && !serverListResultSchema.safeParse(value.data).success)
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid catalog update", path: ["data"] });
+  if (value.event === "monitoring.failed" && !z.object({ accountId: z.string(), message: z.string(), favorites: z.array(z.unknown()).nullable().optional() }).safeParse(value.data).success)
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Invalid monitoring failure", path: ["data"] });
 });
 
 export const presenceSnapshotSchema = z.object({

@@ -1,0 +1,217 @@
+/* Server surfaces share the launcher palette; themes only change existing tokens. */
+.main-content { display: flex; flex-direction: column; }
+.content-scroll { flex: 1; height: auto; min-height: 0; }
+
+.last-server-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  margin-bottom: 32px;
+  padding: 30px 32px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: linear-gradient(115deg, var(--hero-start), var(--hero-mid) 54%, var(--hero-end));
+  box-shadow: var(--shadow);
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+  animation: station-reveal 300ms ease both;
+}
+.last-server-content { position: relative; z-index: 1; max-width: 74%; }
+.last-server-topline { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; }
+.last-server-topline .eyebrow { font-size: 10px; letter-spacing: .09em; color: var(--accent-hover); }
+.last-server-status { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+.last-server-status i, .inspector-status i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.last-server-status.online i, .inspector-status.online i { color: var(--success); }
+.last-server-card h2 { margin: 17px 0 7px; font-size: clamp(23px, 2.4vw, 32px); line-height: 1.2; letter-spacing: -.04em; overflow-wrap: anywhere; }
+.last-server-subtitle { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text-muted); overflow-wrap: anywhere; }
+.last-server-stats { display: flex; flex-wrap: wrap; gap: 16px 27px; margin: 25px 0 26px; }
+.last-server-stats > div { min-width: 82px; }
+.last-server-stats dt { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-muted); }
+.last-server-stats dd { margin: 6px 0 0; font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.last-server-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 18px; }
+.last-server-actions .primary-button { min-height: 43px; padding: 0 21px; border-radius: 10px; }
+.last-server-details { display: inline-flex; align-items: center; gap: 9px; background: rgba(var(--accent-rgb), .08); border: 1px solid var(--border); border-radius: 10px; color: var(--accent-hover); padding: 12px 14px; font-size: 12px; transition: color 150ms ease, background 150ms ease; }
+.last-server-details:hover { color: var(--text); background: rgba(var(--accent-rgb), .16); }
+.last-server-card.empty .last-server-actions { margin-top: 25px; }
+.last-server-art { position: absolute; z-index: 0; right: -8px; top: 50%; width: 245px; height: 245px; transform: translateY(-50%); pointer-events: none; opacity: .85; }
+.station-orbit { position: absolute; inset: 9px; border-radius: 50%; border: 1px solid rgba(var(--accent-rgb), .09); }
+.station-orbit::after { content: ""; position: absolute; inset: 24px; border-radius: 50%; border: 1px solid rgba(var(--accent-rgb), .07); }
+.station-tile { position: absolute; inset: 58px; display: grid; place-items: center; border: 1px solid rgba(var(--accent-rgb), .17); border-radius: 26px; background: linear-gradient(145deg, rgba(var(--accent-rgb), .2), rgba(var(--accent-rgb), .06)); color: var(--accent-hover); box-shadow: 0 16px 38px rgba(0, 0, 0, .16); transform: rotate(-8deg); }
+.station-signal { position: absolute; right: 45px; top: 47px; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; border: 1px solid rgba(var(--accent-rgb), .16); color: var(--accent-hover); background: var(--surface-elevated); }
+
+.server-inspector {
+  position: absolute;
+  z-index: 45;
+  top: 54px;
+  right: 12px;
+  bottom: var(--launch-dock-clearance, 12px);
+  width: min(400px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(var(--accent-rgb), .16);
+  border-radius: 20px;
+  background: linear-gradient(155deg, var(--modal-start), var(--modal-end));
+  box-shadow: -12px 0 48px rgba(0, 0, 0, .24);
+  animation: inspector-in 300ms cubic-bezier(.2, .8, .2, 1) both;
+}
+.inspector-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px 10px 24px; border-bottom: 1px solid rgba(var(--accent-rgb), .16); }
+.inspector-toolbar > span { color: var(--text-muted); font-size: 11px; }
+.inspector-toolbar > div { display: flex; gap: 5px; }
+.inspector-toolbar .icon-button { width: 32px; height: 32px; background: rgba(var(--accent-rgb), .05); border-color: rgba(var(--accent-rgb), .13); }
+.inspector-toolbar .icon-button:hover { background: rgba(var(--accent-rgb), .09); }
+.inspector-scroll { flex: 1; min-height: 0; overflow: auto; padding: 24px; overscroll-behavior: contain; }
+.inspector-identity { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.inspector-server-icon { display: grid; place-items: center; flex-shrink: 0; width: 54px; height: 54px; border-radius: 16px; background: rgba(var(--accent-rgb), .09); border: 1px solid rgba(var(--accent-rgb), .13); color: var(--accent-hover); }
+.inspector-status { display: inline-flex; align-items: center; gap: 7px; min-height: 26px; padding: 5px 9px; border: 1px solid var(--ui-line); border-radius: 999px; background: rgba(var(--accent-rgb), .04); color: var(--text-muted); font-size: 10px; line-height: 1.4; }
+.inspector-status i { flex-shrink: 0; }
+.inspector-heading h2 { font-size: 25px; line-height: 1.25; letter-spacing: -.04em; margin: 9px 0; overflow-wrap: anywhere; }
+.inspector-heading > p { margin: 0; color: var(--text-muted); font-size: 11px; overflow-wrap: anywhere; }
+.inspector-metrics { display: grid; grid-template-columns: 1fr 1fr; margin: 24px 0 0; padding: 17px 0; border-block: 1px solid rgba(var(--accent-rgb), .16); }
+.inspector-metrics > div + div { padding-left: 24px; border-left: 1px solid rgba(var(--accent-rgb), .16); }
+.inspector-metrics dt, .inspector-facts dt { display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 11px; }
+.inspector-metrics dd { margin: 6px 0 0; font-size: 23px; font-weight: 700; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.inspector-metrics small { font-size: 12px; color: var(--text-muted); font-weight: 400; letter-spacing: 0; }
+.inspector-facts { margin: 17px 0 23px; display: grid; gap: 11px; }
+.inspector-facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 20px; }
+.inspector-facts dd { margin: 0; font-size: 12px; text-align: right; overflow-wrap: anywhere; min-width: 0; }
+.inspector-description { border-top: 1px solid rgba(var(--accent-rgb), .16); padding-top: 21px; }
+.inspector-description h3 { margin: 0 0 12px; font-size: 12px; }
+.inspector-description p { margin: 0; font-size: 12px; color: var(--text-muted); line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inspector-loading { display: flex; align-items: center; gap: 8px; }
+.inspector-error { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--danger); }
+.inspector-error p { flex: 1; min-width: 0; }
+.inspector-links { display: grid; gap: 6px; margin-top: 16px; }
+.inspector-links button { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 34px; padding: 8px 0; background: transparent; color: var(--accent-hover); text-align: left; font-size: 12px; }
+.inspector-links svg { flex-shrink: 0; }
+.inspector-note { margin-top: 25px; border-top: 1px solid rgba(var(--accent-rgb), .16); padding-top: 18px; }
+.inspector-note summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12px; list-style: none; }
+.inspector-note summary svg:last-child:not(:first-child) { margin-left: auto; color: var(--success); }
+.inspector-note > p { font-size: 10px; color: var(--text-muted); }
+.inspector-note textarea { width: 100%; resize: vertical; min-height: 76px; max-height: 180px; padding: 12px; border-radius: 11px; border: 1px solid rgba(var(--accent-rgb), .16); background: var(--bg); color: var(--text); font: inherit; font-size: 12px; }
+.inspector-note textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.inspector-note-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 9px; }
+.inspector-note .inspector-note-error { color: var(--danger); }
+.inspector-footer { flex-shrink: 0; display: grid; gap: 10px; text-align: center; padding: 18px 24px; border-top: 1px solid rgba(var(--accent-rgb), .16); background: var(--overlay-surface); }
+.inspector-footer .primary-button { width: 100%; min-height: 43px; border-radius: 10px; }
+.inspector-footer > span { color: var(--text-muted); font-size: 10px; }
+
+.launch-dock { flex-shrink: 0; margin: 0 28px 20px; border: 1px solid rgba(var(--accent-rgb), .16); border-radius: 16px; background: linear-gradient(145deg, var(--card-start), var(--card-end)); box-shadow: 0 12px 30px rgba(0, 0, 0, .2); overflow: hidden; max-height: 45%; overflow-y: auto; animation: dock-in 200ms ease both; }
+.launch-dock-row { display: flex; align-items: center; gap: 13px; padding: 15px 18px; }
+.launch-dock-icon { display: grid; place-items: center; flex: 0 0 38px; height: 38px; border-radius: 11px; background: rgba(var(--accent-rgb), .09); color: var(--accent-hover); border: 1px solid var(--border); }
+.launch-dock.playing .launch-dock-icon { background: rgba(85, 214, 138, .08); color: var(--success); border-color: rgba(85, 214, 138, .2); }
+.launch-dock-copy { flex: 1; min-width: 0; }
+.launch-dock-copy > strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.launch-dock-copy > span { display: block; margin-top: 4px; color: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.dock-separator { padding: 0 4px; opacity: .5; }
+.launch-dock-actions { display: flex; align-items: center; gap: 5px; }
+.launch-dock-actions .ghost-button { font-size: 11px; }
+.launch-dock-actions .icon-button { border-color: transparent; background: transparent; width: 29px; height: 29px; }
+.dock-expand svg { transform: none; transition: transform 180ms ease; }
+.dock-expand svg.expanded { transform: rotate(180deg); }
+.launch-dock .dock-expand:hover > svg { transform: translateY(-2px); }
+.launch-dock .dock-expand:hover > svg.expanded { transform: rotate(180deg) translateY(-2px); }
+.launch-dock-progress { height: 2px; background: rgba(var(--accent-rgb), .07); overflow: hidden; }
+.launch-dock-progress > span { display: block; height: 100%; background: var(--accent); transition: width 240ms ease; box-shadow: 0 0 8px rgba(var(--accent-rgb), .35); }
+.launch-dock-progress.indeterminate > span { width: 25%; animation: connection-progress 1.6s ease-in-out infinite; }
+.launch-dock-details { padding: 16px 18px; border-top: 1px solid rgba(var(--accent-rgb), .16); }
+.launch-stages { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.launch-stages li { display: flex; align-items: center; gap: 7px; font-size: 10px; color: var(--text-muted); }
+.launch-stages li > span { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid rgba(var(--accent-rgb), .16); border-radius: 50%; font-size: 9px; }
+.launch-stages .current { color: var(--text); }
+.launch-stages .current > span { color: var(--accent-hover); border-color: rgba(var(--accent-rgb), .35); }
+.launch-stages .complete > span { color: var(--success); border-color: rgba(85, 214, 138, .22); background: rgba(85, 214, 138, .07); }
+.launch-policy p { font-size: 12px; line-height: 1.7; color: var(--text-muted); margin: 0 0 14px; }
+.launch-policy > div { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.launch-dock-error { margin: 0; font-size: 12px; line-height: 1.6; color: var(--danger); }
+.launch-dock.failed { border-color: rgba(var(--accent-rgb), .25); }
+
+/* The inspector overlays the right edge without reflowing catalog rows.
+   Keeping grid geometry preserves the selected server at deep scroll positions. */
+@media (max-width: 920px) {
+  .last-server-card { padding: 25px; }
+  .last-server-content { max-width: 100%; }
+  .last-server-art { opacity: .18; right: -60px; }
+  .launch-dock { margin: 0 16px 16px; }
+  .launch-dock-row { gap: 10px; padding: 12px; }
+  .launch-dock-actions { gap: 0; }
+  .launch-stages { flex-wrap: wrap; gap: 10px; }
+}
+
+/* One-shot motion follows the control's meaning. Only active downloads loop. */
+.last-server-card:hover { border-color: rgba(var(--accent-rgb), .4); box-shadow: var(--shadow), 0 0 28px rgba(var(--accent-rgb), .06); }
+.last-server-content > *, .inspector-scroll > * { animation: station-reveal 280ms ease both; }
+.last-server-content > h2 { animation-delay: 35ms; }
+.last-server-content > .last-server-subtitle { animation-delay: 65ms; }
+.last-server-stats { animation-delay: 90ms; }
+.last-server-actions { animation-delay: 120ms; }
+.inspector-metrics { animation-delay: 45ms; }
+.inspector-facts { animation-delay: 80ms; }
+.inspector-description { animation-delay: 115ms; }
+.inspector-note { animation-delay: 145ms; }
+.last-server-stats > div, .inspector-metrics > div, .inspector-facts > div { transition: color 180ms ease; }
+.last-server-stats > div:hover dt, .inspector-metrics > div:hover dt, .inspector-facts > div:hover dt { color: var(--accent-hover); }
+.last-server-stats svg, .inspector-scroll svg, .station-tile svg, .station-signal svg { transform-origin: center; transform-box: fill-box; }
+.last-server-card:is(:hover, :focus-within) .station-tile svg { animation: station-gamepad 600ms ease both; }
+.last-server-card:is(:hover, :focus-within) .station-signal svg { animation: station-signal 600ms ease both; }
+.last-server-card:is(:hover, :focus-within) .station-orbit { animation: station-ring 650ms ease both; }
+.last-server-stats > div:hover .lucide-users, .inspector-metrics > div:hover .lucide-users { animation: station-people 480ms ease both; }
+.last-server-stats > div:hover .lucide-clock3 polyline { transform-origin: 12px 12px; animation: station-clock 650ms ease both; }
+.last-server-stats > div:hover .lucide-history { animation: station-history 600ms ease both; }
+.last-server-details:is(:hover, :focus-visible) svg, .last-server-actions .primary-button:is(:hover, :focus-visible):not(:disabled) .play-icon, .inspector-footer .primary-button:is(:hover, :focus-visible):not(:disabled) .play-icon { animation: station-forward 480ms ease both; }
+.inspector-server-icon svg { animation: station-map 650ms ease both; }
+.inspector-server-icon:hover svg, .inspector-facts > div:hover .lucide-map { animation: station-map-hover 650ms ease both; }
+.inspector-facts > div:hover .lucide-gamepad2 { animation: station-gamepad 600ms ease both; }
+.inspector-metrics > div:hover .lucide-activity { animation: station-signal 500ms ease both; }
+.inspector-links button:is(:hover, :focus-visible) svg { animation: station-external 450ms ease both; }
+.inspector-note[open] > :not(summary) { animation: station-reveal 220ms ease both; }
+.inspector-note summary:is(:hover, :focus-visible) .lucide-sticky-note { animation: station-map 500ms ease both; }
+.inspector-note .secondary-button:is(:hover, :focus-visible):not(:disabled) .lucide-save { animation: station-save 450ms ease both; }
+.inspector-note .icon-button:is(:hover, :focus-visible):not(:disabled) .lucide-trash2 { animation: station-trash 450ms ease both; }
+.inspector-toolbar .icon-button:is(:hover, :focus-visible):not(:disabled) .lucide-refresh-cw:not(.spin) { animation: gear-spin 650ms ease both; transform: none; }
+.inspector-toolbar .icon-button:is(:hover, :focus-visible) .lucide-x, .launch-dock-actions button:is(:hover, :focus-visible):not(:disabled) .lucide-x { animation: station-close 420ms ease both; }
+.launch-dock-details { animation: station-reveal 220ms ease both; }
+.launch-stage-label { display: inline-block; animation: station-reveal 220ms ease both; }
+.launch-dock-icon[data-phase="download"] svg { animation: station-download 950ms ease-in-out infinite; }
+.launch-dock-icon[data-phase="verify"] svg, .launch-dock-icon[data-phase="policy"] svg { animation: station-confirm 500ms ease both; }
+.launch-dock-icon[data-phase="starting"] svg { animation: station-rocket 600ms ease both; }
+.launch-dock-icon[data-phase="playing"] svg { animation: station-gamepad 600ms ease both; }
+.launch-dock-icon[data-phase="error"] svg { animation: station-error 450ms ease both; }
+.launch-stages .complete > span { animation: station-confirm 350ms ease both; }
+.launch-stages .current > span { animation: station-confirm 350ms ease both; background: rgba(var(--accent-rgb), .09); }
+.launch-stages li:nth-child(2) > span { animation-delay: 40ms; }
+.launch-stages li:nth-child(3) > span { animation-delay: 80ms; }
+.launch-dock-actions .dock-cancel { padding: 8px 10px; border-radius: 9px; }
+.launch-dock-actions .dock-cancel:hover { background: rgba(var(--accent-rgb), .08); }
+
+@keyframes inspector-in { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes dock-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes station-reveal { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+@keyframes station-gamepad { 0%, 100% { transform: none; } 25% { transform: rotate(-13deg) translateY(-2px); } 60% { transform: rotate(9deg) scale(1.08); } 80% { transform: rotate(-3deg); } }
+@keyframes station-signal { 0%, 100% { transform: none; } 35% { transform: scale(1.22); } 65% { transform: scale(.94); } }
+@keyframes station-ring { 0%, 100% { opacity: 1; transform: none; } 55% { opacity: .35; transform: scale(1.08); } }
+@keyframes station-people { 0%, 100% { transform: none; } 35% { transform: translateY(-3px) rotate(-6deg); } 70% { transform: translateY(1px); } }
+@keyframes station-clock { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+@keyframes station-history { 0%, 100% { transform: none; } 45% { transform: rotate(-60deg); } }
+@keyframes station-forward { 0%, 100% { transform: none; } 40% { transform: translateX(5px) scale(1.12); } 75% { transform: translateX(-1px); } }
+@keyframes station-map { 0% { opacity: .4; transform: perspective(100px) rotateY(-60deg) scale(.85); } 65% { opacity: 1; transform: perspective(100px) rotateY(12deg); } 100% { transform: none; } }
+@keyframes station-map-hover { 0%, 100% { transform: none; } 40% { transform: perspective(100px) rotateY(-38deg); } 75% { transform: perspective(100px) rotateY(10deg); } }
+@keyframes station-external { 0%, 100% { transform: none; } 45% { transform: translate(3px, -3px); } }
+@keyframes station-save { 0%, 100% { transform: none; } 35% { transform: translateY(3px) scale(.88); } 70% { transform: translateY(-1px) scale(1.08); } }
+@keyframes station-trash { 0%, 100% { transform: none; } 30% { transform: rotate(-12deg); } 65% { transform: rotate(9deg); } }
+@keyframes station-close { 0%, 100% { transform: none; } 50% { transform: rotate(90deg) scale(.88); } }
+@keyframes station-download { 0%, 100% { transform: translateY(-2px); } 55% { transform: translateY(3px); } }
+@keyframes station-confirm { 0% { opacity: .4; transform: scale(.65); } 60% { opacity: 1; transform: scale(1.14); } 100% { transform: none; } }
+@keyframes station-rocket { 0% { opacity: .4; transform: translate(-5px, 5px); } 55% { opacity: 1; transform: translate(3px, -3px); } 100% { transform: none; } }
+@keyframes station-error { 0%, 100% { transform: none; } 25% { transform: translateX(-3px); } 50% { transform: translateX(3px); } 75% { transform: translateX(-1px); } }
+
+/* Preserve layout transforms on the decorative tile/art, but disable all motion. */
+.reduce-motion :is(.last-server-card, .server-inspector, .launch-dock),
+.reduce-motion :is(.last-server-card, .server-inspector, .launch-dock) * { animation: none !important; transition: none !important; }
+.reduce-motion :is(.last-server-card, .server-inspector, .launch-dock) :is(button, svg, svg *, .station-orbit) { transform: none !important; }
+.reduce-motion .launch-dock-progress.indeterminate > span { opacity: .45; width: 100%; }
+@media (prefers-reduced-motion: reduce) {
+  :is(.last-server-card, .server-inspector, .launch-dock),
+  :is(.last-server-card, .server-inspector, .launch-dock) * { animation: none !important; transition: none !important; }
+  :is(.last-server-card, .server-inspector, .launch-dock) :is(button, svg, svg *, .station-orbit) { transform: none !important; }
+  .launch-dock-progress.indeterminate > span { opacity: .45; width: 100%; }
+}

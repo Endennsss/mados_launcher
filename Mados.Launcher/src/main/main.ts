@@ -1,14 +1,16 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { autoUpdater } from "electron-updater";
+import { autoUpdater, NsisUpdater } from "electron-updater";
 import { existsSync } from "node:fs";
 import { copyFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { localServerSnapshotSchema, rendererInvokeSchema, validateRendererParams } from "../contracts/schema";
 import type { StartupState } from "../contracts/launcher";
 import { DiscordPresenceService } from "./discord-presence";
 import { prepareDataMigration } from "./data-migration";
 import { containsDeepLink } from "./deep-link";
 import { WorkerClient } from "./worker-client";
+import { GitHubWindowsUpdateProvider } from "./github-update-provider";
+import { LauncherUpdates } from "./launcher-updates";
 
 const WINDOWS_APP_USER_MODEL_ID = "com.mados.launcher";
 if (process.platform === "win32") app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
@@ -20,6 +22,7 @@ let closePromptActive = false;
 let shutdownRequest: Promise<void> | undefined;
 let workerInitialized = false;
 let localServerState: unknown;
+let connectionActive = false;
 const approvedLocalServerArchives = new Set<string>();
 let startupState: StartupState = { stage: "starting-worker", message: "Запускаем Mados Launcher…" };
 const worker = new WorkerClient();
@@ -27,6 +30,7 @@ const discordPresence = new DiscordPresenceService((status) => {
   sendToRenderer("discord-status", { status });
 });
 const pendingDeepLinks: string[] = [];
+const launcherUpdates = new LauncherUpdates(autoUpdater, state => sendShellUpdateEvent("shell.updateState", state), { packaged: app.isPackaged, currentVersion: app.getVersion() });
 
 function sendToRenderer(channel: string, payload: unknown): void {
   const window = windowRef;
@@ -170,6 +174,11 @@ function requestShutdown(installUpdate = false): void {
 }
 
 async function performShutdown(installUpdate: boolean): Promise<void> {
+  if (installUpdate && !launcherUpdates.canInstall()) return;
+  if (installUpdate && connectionActive) {
+    sendToRenderer("launcher-error", { message: "Завершите игру или подключение перед установкой обновления Mados." });
+    return;
+  }
   // During startup there cannot yet be a server started by the renderer. Do
   // not await WorkerClient.ready here: closing a failed startup must still work.
   if (workerInitialized) {
@@ -196,6 +205,10 @@ async function performShutdown(installUpdate: boolean): Promise<void> {
       : await dialog.showMessageBox(options);
     if (result.response !== 1) return;
   }
+  if (installUpdate && connectionActive) {
+    sendToRenderer("launcher-error", { message: "Завершите игру или подключение перед установкой обновления Mados." });
+    return;
+  }
   shuttingDown = true;
   // Worker shutdown owns the graceful stop, process-tree cleanup, and log flush.
   // Its deadline must not be cut short by a separate Electron quit timer.
@@ -204,8 +217,8 @@ async function performShutdown(installUpdate: boolean): Promise<void> {
     if (result.status === "rejected") console.error("[mados] Service shutdown failed", result.reason);
   }
   shutdownComplete = true;
-  if (installUpdate && app.isPackaged) autoUpdater.quitAndInstall();
-  else app.quit();
+  if (installUpdate && app.isPackaged) launcherUpdates.install();
+  else { launcherUpdates.stop(); app.quit(); }
 }
 
 async function withDeadline<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
@@ -273,6 +286,9 @@ async function start(): Promise<void> {
   }
 
   worker.on("event", (event) => {
+    if (event.event.startsWith("connection.") && typeof event.data?.status === "string") {
+      connectionActive = !["ClientExited", "Cancelled", "ConnectionFailed", "UpdateError", "NotAContentBundle", "Error"].includes(event.data.status);
+    }
     if (event.event === "localServer.status" && localServerSnapshotSchema.safeParse(event.data).success) localServerState = event.data;
     if (shuttingDown) return;
     if (event.event === "app.startup" && event.data?.stage === "checking-data") setStartupState({ stage: "checking-data", message: "Проверяем данные…" });
@@ -297,16 +313,18 @@ async function start(): Promise<void> {
 
 function setupAutoUpdater(): void {
   if (!app.isPackaged) return;
-
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on("checking-for-update", () => sendShellUpdateEvent("shell.updateChecking", {}));
-  autoUpdater.on("update-available", (info) => sendShellUpdateEvent("shell.updateAvailable", { version: info.version }));
-  autoUpdater.on("update-not-available", () => sendShellUpdateEvent("shell.updateNotAvailable", {}));
-  autoUpdater.on("download-progress", (progress) => sendShellUpdateEvent("shell.updateProgress", { percent: progress.percent, bytesPerSecond: progress.bytesPerSecond }));
-  autoUpdater.on("update-downloaded", (info) => sendShellUpdateEvent("shell.updateDownloaded", { version: info.version }));
-  autoUpdater.on("error", (error) => sendShellUpdateEvent("shell.updateError", { message: error.message }));
-  void autoUpdater.checkForUpdates().catch((error: Error) => sendShellUpdateEvent("shell.updateError", { message: error.message }));
+  if (!existsSync(join(process.resourcesPath, "app-update.yml"))) {
+    autoUpdater.updateConfigPath = join(process.resourcesPath, "mados-update.yml");
+  }
+  if (process.platform === "win32" && autoUpdater instanceof NsisUpdater) {
+    autoUpdater.setFeedURL({ provider: "custom", updateProvider: GitHubWindowsUpdateProvider });
+    // The custom installer extracts ZIPs into a user-selected directory. NSIS
+    // must replace that same installation rather than create a second copy.
+    autoUpdater.installDirectory = dirname(process.execPath);
+    autoUpdater.disableDifferentialDownload = true;
+    autoUpdater.disableWebInstaller = true;
+  }
+  launcherUpdates.start();
 }
 
 function sendShellUpdateEvent(event: string, data: unknown): void {
@@ -424,15 +442,15 @@ ipcMain.handle("get-startup-state", (event) => {
 });
 ipcMain.handle("check-for-updates", async (event) => {
   if (!trustedSender(event)) throw new Error("Untrusted renderer");
-  if (!app.isPackaged) return { available: false, development: true };
-  const result = await autoUpdater.checkForUpdates();
-  return { available: Boolean(result?.updateInfo) };
+  return launcherUpdates.check();
+});
+ipcMain.handle("get-update-state", (event) => {
+  if (!trustedSender(event)) throw new Error("Untrusted renderer");
+  return launcherUpdates.snapshot();
 });
 ipcMain.handle("download-update", async (event) => {
   if (!trustedSender(event)) throw new Error("Untrusted renderer");
-  if (!app.isPackaged) return { downloaded: false, development: true };
-  await autoUpdater.downloadUpdate();
-  return { downloaded: true };
+  return launcherUpdates.download();
 });
 ipcMain.on("install-update", (event) => {
   if (!trustedSender(event)) return;

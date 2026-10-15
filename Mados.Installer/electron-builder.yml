@@ -28,7 +28,7 @@ files:
   - package.json
 win:
   icon: src/renderer/assets/cat-logo.ico
-  signAndEditExecutable: false
+  signAndEditExecutable: true
   target:
     - portable
   artifactName: Mados.Installer.Windows.${arch}.${ext}

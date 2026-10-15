@@ -1,6 +1,6 @@
 {
   "name": "mados-installer",
-  "version": "0.40.3",
+  "version": "0.41.0",
   "description": "Bootstrap installer for Mados Launcher",
   "private": true,
   "main": "dist/main/main.js",
@@ -50,7 +50,9 @@
     "productName": "Mados Launcher Installer",
     "asar": true,
     "compression": "maximum",
-    "electronLanguages": ["en-US"],
+    "electronLanguages": [
+      "en-US"
+    ],
     "files": [
       "dist/main/**/*",
       "!dist/main/**/*.map",
@@ -76,7 +78,7 @@
     ],
     "win": {
       "icon": "src/renderer/assets/cat-logo.ico",
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "target": [
         "portable"
       ],

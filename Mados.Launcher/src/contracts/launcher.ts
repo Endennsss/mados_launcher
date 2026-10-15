@@ -10,6 +10,12 @@ export type WorkerEvent = {
   data: unknown;
 };
 
+export type FavoriteMonitoringFailure = {
+  accountId: string;
+  message: string;
+  favorites?: FavoriteMonitorSummary[] | null;
+};
+
 export type PresenceState = "launcher" | "connecting" | "updating" | "playing";
 
 export type PresenceSnapshot = {
@@ -107,6 +113,11 @@ export type ServerListResult = {
   servers: Server[];
   failedHubs: string[];
   partialError: boolean;
+  /** Increasing worker revision prevents late RPC replies replacing newer events. */
+  revision?: number;
+  /** Cards are usable while hub/ping enrichment continues. */
+  refreshing?: boolean;
+  stale?: boolean;
 };
 
 export type Settings = {
@@ -383,8 +394,9 @@ export type LauncherApi = {
   openExternal(url: string): Promise<void>;
   pickContentBundle(): Promise<string | null>;
   getPathForFile(file: File): string;
-  checkForUpdates(): Promise<unknown>;
-  downloadUpdate(): Promise<unknown>;
+  getUpdateState(): Promise<ShellUpdateState>;
+  checkForUpdates(): Promise<ShellUpdateState>;
+  downloadUpdate(): Promise<ShellUpdateState>;
   installUpdate(): void;
 };
 
@@ -393,3 +405,13 @@ declare global {
     mados: LauncherApi;
   }
 }
+
+export type ShellUpdateState = {
+  status: "idle" | "checking" | "available" | "downloading" | "downloaded" | "error" | "disabled";
+  currentVersion: string;
+  revision: number;
+  version?: string;
+  percent?: number;
+  message?: string;
+  checkedAt?: string;
+};

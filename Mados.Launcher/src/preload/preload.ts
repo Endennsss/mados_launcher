@@ -73,6 +73,7 @@ const api: LauncherApi = {
   pickLocalServerArchive: () => ipcRenderer.invoke("pick-local-server-archive") as Promise<string | null>,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   checkForUpdates: () => ipcRenderer.invoke("check-for-updates"),
+  getUpdateState: () => ipcRenderer.invoke("get-update-state"),
   downloadUpdate: () => ipcRenderer.invoke("download-update"),
   installUpdate: () => ipcRenderer.send("install-update"),
 };

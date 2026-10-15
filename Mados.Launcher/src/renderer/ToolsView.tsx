@@ -9,6 +9,7 @@ import {
     FileArchive,
     FolderOpen,
     Link2,
+    LoaderCircle,
     PackageOpen,
     Play,
     RefreshCw,
@@ -35,11 +36,18 @@ import type {
 import { LaunchProfiles } from "./LaunchProfiles";
 import type { LaunchProfileDraft } from "./launch-profiles";
 import { buildVariantLabel, configChanges as configChangesPreview, formatBuildSize, importStageLabel, isLocalProcessActive, localStatusLabels } from "./tools-ui";
-function formatPlaytimeDate(value: string): string {
-    return new Date(value).toLocaleDateString(undefined, {
+import { useConfirm } from "./ConfirmDialog";
+import { SelectField } from "./SelectField";
+import { ActionMenu } from "./ActionMenu";
+
+function formatBackupDate(value: string): string {
+    return new Date(value).toLocaleString(undefined, {
         day: "numeric",
         month: "short",
         year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
     });
 }
 export function ToolsView({
@@ -61,6 +69,7 @@ export function ToolsView({
 }) {
     const [profiles, setProfiles] = useState<LocalServerProfile[]>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
+    const confirm = useConfirm(selectedId);
     const [sourceUrl, setSourceUrl] = useState("");
     const [profileName, setProfileName] = useState("");
     const [inspection, setInspection] = useState<CdnInspection | null>(null);
@@ -70,6 +79,7 @@ export function ToolsView({
     const [busy, setBusy] = useState<
         "inspect" | "import" | "action" | "config" | null
     >(null);
+    const [pendingAction, setPendingAction] = useState<"start" | "stop" | "restart" | null>(null);
     const [progress, setProgress] = useState<{
         percent: number | null;
         message: string;
@@ -253,7 +263,7 @@ export function ToolsView({
             return;
         }
         const importId = crypto.randomUUID();
-        if (updateTarget && !window.confirm(`Обновить «${updateTarget.name}»? Сервер будет остановлен. Данные и конфигурация сохранятся в резервной копии.`)) return;
+        if (updateTarget && !await confirm(`Обновить «${updateTarget.name}»? Сервер будет остановлен. Данные и конфигурация сохранятся в резервной копии.`)) return;
         currentOperation.current = importId;
         cancelledOperation.current = null;
         setBusy("import");
@@ -310,10 +320,11 @@ export function ToolsView({
         if (!selected) return;
         if (
             action === "stop" &&
-            !window.confirm("Остановить локальный сервер?")
+            !await confirm("Остановить локальный сервер?")
         )
             return;
         setBusy("action");
+        setPendingAction(action);
         onError(null);
         try {
             const next = await window.mados.localServers[action](selected.id);
@@ -322,6 +333,7 @@ export function ToolsView({
             onError((caught as Error).message);
         } finally {
             setBusy(null);
+            setPendingAction(null);
         }
     };
 
@@ -353,13 +365,20 @@ export function ToolsView({
 
     const status = snapshot?.status ?? "idle";
     const statusLabel = localStatusLabels;
+    const readyToImport = Boolean(archivePath || selectedBuildId);
+    const processTransition = pendingAction !== null || ["starting", "stopping", "downloading", "extracting"].includes(status);
+    const processActionLabel = pendingAction === "restart" ? "Перезапускается…"
+        : pendingAction === "stop" || status === "stopping" ? "Останавливается…"
+        : pendingAction === "start" || status === "starting" ? "Запускается…"
+        : processTransition ? `${statusLabel[status]}…`
+        : status === "running" ? "Остановить" : "Запустить";
     const rawTomlError = configMode === "raw" && config && config.rawToml.trim() && !/\[[^\]]+\]/.test(config.rawToml)
         ? "В TOML не найдено ни одной секции [section]. Проверьте формат."
         : null;
-    const setConfigEditorMode = (next: "raw" | "fields") => {
+    const setConfigEditorMode = async (next: "raw" | "fields") => {
         if (next === configMode) return;
         if (config && configBaseline && configChangesPreview(configBaseline, config, configMode).length > 0) {
-            if (!window.confirm("Сменить редактор и сбросить несохранённые изменения? Сохраните их, если хотите продолжить в другом режиме.")) return;
+            if (!await confirm("Сменить редактор и сбросить несохранённые изменения? Сохраните их, если хотите продолжить в другом режиме.")) return;
         }
         setConfig(configBaseline); setConfigError(null); setConfigMode(next); setAdvanced(next === "raw");
     };
@@ -367,7 +386,7 @@ export function ToolsView({
         <section className="page page-enter tools-page">
             <div className="page-heading">
                 <div>
-                    <p className="eyebrow">Локальная инфраструктура</p>
+                    <p className="eyebrow">Ваша станция</p>
                     <h1>Инструменты</h1>
                     <p className="page-subtitle">
                         Установите сервер из CDN или ZIP и управляйте им прямо
@@ -377,7 +396,7 @@ export function ToolsView({
                 <button
                     className="icon-button"
                     onClick={() => void reload()}
-                    title="Обновить сборки"
+                    data-tooltip="Обновить сборки"
                     aria-label="Обновить сборки"
                 >
                     <RefreshCw
@@ -424,17 +443,12 @@ export function ToolsView({
                         </label>
                         <div className="tool-inline-actions">
                             <button
-                                className="secondary-button"
-                                disabled={busy !== null}
+                                className={readyToImport ? "secondary-button" : "primary-button"}
+                                disabled={busy !== null || !sourceUrl.trim()}
                                 onClick={() => void inspect()}
                             >
-                                <Link2
-                                    size={15}
-                                    className={
-                                        busy === "inspect" ? "icon-pulse" : ""
-                                    }
-                                />
-                                Проверить ссылку
+                                {busy === "inspect" ? <LoaderCircle size={15} className="spin" /> : <Link2 size={15} />}
+                                {busy === "inspect" ? "Проверяем ссылку…" : "Проверить ссылку"}
                             </button>
                             <button
                                 className="ghost-button"
@@ -480,7 +494,7 @@ export function ToolsView({
                                                 {build.version ??
                                                     "Версия не указана"}
                                                 {build.publishedAt
-                                                    ? ` · ${formatPlaytimeDate(build.publishedAt)}`
+                                                    ? ` · ${new Date(build.publishedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
                                                     : ""}
                                                 {` · ${formatBuildSize(build.sizeBytes)}`}
                                             </small>
@@ -490,7 +504,7 @@ export function ToolsView({
                                 ))}
                             </div>
                         )}
-                        <label>
+                        <label hidden={!readyToImport}>
                             Имя профиля
                             <input
                                 value={profileName}
@@ -501,7 +515,7 @@ export function ToolsView({
                                 placeholder="Моя локальная станция"
                             />
                         </label>
-                        <div className="tool-inline-actions">
+                        <div className="tool-inline-actions" hidden={!readyToImport && !operationId}>
                             <button
                                 className="primary-button"
                                 disabled={
@@ -583,6 +597,7 @@ export function ToolsView({
                                     <button
                                         type="button"
                                         className={`local-profile-item ${selectedId === profile.id ? "selected" : ""}`}
+                                        disabled={busy !== null}
                                         key={profile.id}
                                         onClick={() =>
                                             setSelectedId(profile.id)
@@ -614,151 +629,31 @@ export function ToolsView({
                                             <span>PID {snapshot.pid}</span>
                                         )}
                                     </div>
-                                    <div className="tool-inline-actions">
-                                        <button
-                                            className="primary-button"
-                                            disabled={
-                                                busy !== null ||
-                                                status === "running" ||
-                                                status === "starting"
-                                            }
-                                            onClick={() =>
-                                                void runAction("start")
-                                            }
-                                        >
-                                            <Play
-                                                size={16}
-                                                className={
-                                                    status === "starting"
-                                                        ? "icon-loading"
-                                                        : ""
-                                                }
-                                            />
-                                            Запустить
+                                    <div className="tool-inline-actions local-server-actions">
+                                        <button className="primary-button local-server-primary" disabled={busy !== null || processTransition} onClick={() => void runAction(status === "running" ? "stop" : "start")}>
+                                            {processTransition ? <LoaderCircle size={16} className="spin" /> : status === "running" ? <Square size={16} /> : <Play size={16} fill="currentColor" />}
+                                            {processActionLabel}
                                         </button>
-                                        <button
-                                            className="secondary-button"
-                                            disabled={
-                                                busy !== null ||
-                                                status === "stopped" ||
-                                                status === "idle"
-                                            }
-                                            onClick={() =>
-                                                void runAction("stop")
-                                            }
-                                        >
-                                            <Square
-                                                size={15}
-                                                className={
-                                                    status === "stopping"
-                                                        ? "icon-loading"
-                                                        : ""
-                                                }
-                                            />
-                                            Остановить
-                                        </button>
-                                        <button
-                                            className="ghost-button"
-                                            disabled={busy !== null}
-                                            onClick={() =>
-                                                void runAction("restart")
-                                            }
-                                        >
-                                            <RotateCw size={15} />
-                                            Перезапустить
-                                        </button>
-                                    </div>
-                                    <div className="tool-inline-actions tool-secondary-actions">
-                                        <button className="ghost-button" onClick={() => { setUpdateTargetId(selected.id); importRef.current?.scrollIntoView({ behavior: document.documentElement.classList.contains("reduce-motion") ? "auto" : "smooth", block: "start" }); }}>
-                                            <Download size={15} />
-                                            Обновить сборку
-                                        </button>
-                                        <button
-                                            className="ghost-button"
-                                            onClick={() =>
-                                                void window.mados.localServers
-                                                    .testPort(
-                                                        selected.port,
-                                                        selected.bindAddress,
-                                                    )
-                                                    .then((result) =>
-                                                        setPortNotice(
-                                                            result.available
-                                                                ? "Порт свободен"
-                                                                : (result.error ??
-                                                                      "Порт занят"),
-                                                        ),
-                                                    )
-                                                    .catch((caught) =>
-                                                        onError(
-                                                            (caught as Error)
-                                                                .message,
-                                                        ),
-                                                    )
-                                            }
-                                        >
-                                            <ShieldCheck size={15} />
-                                            Проверить порт
-                                        </button>
-                                        <button
-                                            className="ghost-button"
-                                            onClick={() =>
-                                                void window.mados.localServers.openFolder(
-                                                    selected.id,
-                                                )
-                                            }
-                                        >
-                                            <FolderOpen size={15} />
-                                            Открыть папку
-                                        </button>
-                                        <button
-                                            className="ghost-button"
-                                            onClick={() =>
-                                                void window.mados.localServers.openLog(
-                                                    selected.id,
-                                                )
-                                            }
-                                        >
-                                            <Terminal size={15} />
-                                            Открыть лог
-                                        </button>
-                                        <button
-                                            className="ghost-button"
-                                            onClick={() =>
-                                                void window.mados.localServers.saveLog(
-                                                    selected.id,
-                                                )
-                                            }
-                                        >
-                                            <Save size={15} />
-                                            Сохранить лог
-                                        </button>
-                                        <button
-                                            className="ghost-button danger-text" disabled={isLocalProcessActive(status)}
-                                            onClick={() => {
-                                                if (
-                                                    !window.confirm(
-                                                        `Удалить профиль «${selected.name}»?`,
-                                                    )
-                                                )
-                                                    return;
-                                                void window.mados.localServers
-                                                    .remove(selected.id)
-                                                    .then(() => {
-                                                        setSelectedId(null);
-                                                        void reload();
-                                                    })
-                                                    .catch((caught) =>
-                                                        onError(
-                                                            (caught as Error)
-                                                                .message,
-                                                        ),
-                                                    );
-                                            }}
-                                        >
-                                            <Trash2 size={15} />
-                                            Удалить
-                                        </button>
+                                        {status === "running" && <button className="secondary-button" disabled={busy !== null} onClick={() => void runAction("restart")}><RotateCw size={15} />Перезапустить</button>}
+                                        <ActionMenu key={selected.id} label="Действия сервера" disabled={busy !== null} onError={onError} items={[
+                                            {id:"update",label:"Обновить сборку",icon:<Download size={16} />,disabled:processTransition,onSelect:() => {
+                                                setUpdateTargetId(selected.id);
+                                                importRef.current?.scrollIntoView({behavior:document.documentElement.classList.contains("reduce-motion") || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",block:"start"});
+                                            }},
+                                            {id:"port",label:"Проверить порт",icon:<ShieldCheck size={16} />,onSelect:async() => {
+                                                const result = await window.mados.localServers.testPort(selected.port, selected.bindAddress);
+                                                if (currentSelection.current === selected.id) setPortNotice(result.available ? "Порт свободен" : result.error ?? "Порт занят");
+                                            }},
+                                            {id:"folder",label:"Открыть папку",icon:<FolderOpen size={16} />,separator:true,onSelect:() => window.mados.localServers.openFolder(selected.id)},
+                                            {id:"log",label:"Открыть лог",icon:<Terminal size={16} />,onSelect:() => window.mados.localServers.openLog(selected.id)},
+                                            {id:"export",label:"Сохранить лог",icon:<Save size={16} />,onSelect:() => window.mados.localServers.saveLog(selected.id)},
+                                            {id:"remove",label:"Удалить профиль",icon:<Trash2 size={16} />,danger:true,separator:true,disabled:isLocalProcessActive(status),onSelect:async() => {
+                                                if (!await confirm({title:"Удалить профиль?",message:`Удалить локальный профиль «${selected.name}»?`,confirmLabel:"Удалить",destructive:true})) return;
+                                                await window.mados.localServers.remove(selected.id);
+                                                setSelectedId(current => current === selected.id ? null : current);
+                                                await reload();
+                                            }},
+                                        ]} />
                                     </div>
                                     {portNotice && (
                                         <div className="tool-config-note">
@@ -968,61 +863,18 @@ export function ToolsView({
                                     Сохранить конфигурацию
                                 </button>
                                 {backups.length > 0 && (
-                                    <select
-                                        className="setting-select"
-                                        aria-label="Резервная копия"
-                                        defaultValue=""
-                                        onChange={(event) => {
-                                            const backupId = event.target.value;
-                                            if (!backupId || !selected) return;
-                                            if (
-                                                window.confirm(
-                                                    "Восстановить эту резервную копию?",
-                                                )
-                                            )
-                                                void window.mados.localServers
-                                                    .rollback(
-                                                        selected.id,
-                                                        backupId,
-                                                    )
-                                                    .then(() =>
-                                                        window.mados.localServers.getConfig(
-                                                            selected.id,
-                                                        ),
-                                                    )
-                                                    .then((next) => {
-                                                        setConfig(next);
-                                                        setConfigBaseline(next);
-                                                        void window.mados.localServers
-                                                            .backups(
-                                                                selected.id,
-                                                            )
-                                                            .then(setBackups);
-                                                    })
-                                                    .catch((caught) =>
-                                                        onError(
-                                                            (caught as Error)
-                                                                .message,
-                                                        ),
-                                                    );
-                                            event.currentTarget.value = "";
-                                        }}
-                                    >
-                                        <option value="">
-                                            Откатить backup…
-                                        </option>
-                                        {backups.map((backup) => (
-                                            <option
-                                                key={backup.id}
-                                                value={backup.id}
-                                            >
-                                                {new Date(
-                                                    backup.createdAt,
-                                                ).toLocaleString()}{" "}
-                                                · {backup.reason}
-                                            </option>
-                                        ))}
-                                    </select>
+                                    <SelectField label="Резервная копия" placeholder="Восстановить копию…" value=""
+                                      options={backups.map(backup => ({value:backup.id,label:`${formatBackupDate(backup.createdAt)} · ${backup.reason}`}))}
+                                      onChange={async backupId => {
+                                        if (!selected || !await confirm({title:"Восстановить резервную копию?", message:"Текущие настройки и данные сервера будут заменены выбранной копией.", confirmLabel:"Восстановить"})) return;
+                                        const profileId = selected.id;
+                                        try {
+                                          await window.mados.localServers.rollback(profileId, backupId);
+                                          const next = await window.mados.localServers.getConfig(profileId);
+                                          const nextBackups = await window.mados.localServers.backups(profileId);
+                                          if (currentSelection.current === profileId) { setConfig(next); setConfigBaseline(next); setBackups(nextBackups); }
+                                        } catch (caught) { onError((caught as Error).message); }
+                                      }} />
                                 )}
                             </div>
                         </div>
@@ -1051,7 +903,7 @@ export function ToolsView({
                                     )
                                 }
                                 aria-label="Сохранить лог"
-                                title="Сохранить лог"
+                                data-tooltip="Сохранить лог"
                             >
                                 <Save size={15} />
                             </button>
@@ -1060,7 +912,7 @@ export function ToolsView({
                                 disabled={logs.length === 0}
                                 onClick={() => { if (selectedId) setLogsByProfile((items) => ({ ...items, [selectedId]: [] })); }}
                                 aria-label="Очистить логи"
-                                title="Очистить"
+                                data-tooltip="Очистить"
                             >
                                 <Trash2 size={15} />
                             </button>

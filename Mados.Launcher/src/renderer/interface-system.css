@@ -1,0 +1,221 @@
+/* Shared Mados surfaces and controls. Theme variables live in styles.css. */
+:root {
+  --ui-card: linear-gradient(145deg, var(--card-start), var(--card-end));
+  --ui-elevated: linear-gradient(155deg, var(--modal-start), var(--modal-end));
+  --ui-line: rgba(var(--accent-rgb), .16);
+  --ui-radius: 18px;
+  --ui-control-radius: 10px;
+  --ui-fast: 150ms;
+  --ui-reveal: 240ms;
+  --ui-ease: cubic-bezier(.2,.8,.2,1);
+}
+
+:is(.favorite-card, .server-card, .news-card, .settings-group, .tool-card, .monitoring-card, .playtime-stat, .playtime-server-card, .recent-connection-card, .launch-profiles) {
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius);
+  background: var(--ui-card);
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+}
+:is(.favorite-card, .server-card, .news-card, .monitoring-card, .playtime-server-card, .recent-connection-card):hover {
+  border-color: var(--border);
+  transform: none;
+  box-shadow: 0 10px 28px rgba(0,0,0,.2);
+}
+:is(.account-menu, .notification-journal, .command-palette, .login-panel, .server-inspector, .notification-toast) {
+  border-color: var(--border);
+  background: var(--ui-elevated);
+  box-shadow: var(--shadow);
+}
+.page-heading { margin-bottom: 24px; gap: 16px; }
+.page-heading h1 { font-size: 28px; letter-spacing: -.035em; line-height: 1.2; }
+.page-subtitle { font-size: 12px; line-height: 1.6; color: var(--text-muted); }
+.eyebrow { font-size: 10px; letter-spacing: .11em; }
+:is(.section-heading h2, .launch-profiles-heading h2) { font-size: 17px; letter-spacing: -.02em; }
+:is(.settings-group h3, .tool-card-head h2) { font-size: 14px; line-height: 1.4; }
+.page-enter { animation: mados-page-in var(--ui-reveal) var(--ui-ease) both; }
+.settings-panels > .settings-group { animation: mados-page-in var(--ui-reveal) var(--ui-ease) both; }
+:is(.primary-button, .secondary-button, .filter-button, .mados-select-trigger) {
+  min-height: 38px;
+  border-radius: var(--ui-control-radius);
+  font-size: 12px;
+  gap: 8px;
+  transition: color var(--ui-fast) ease, background var(--ui-fast) ease, border-color var(--ui-fast) ease, box-shadow var(--ui-fast) ease;
+}
+.primary-button:hover:not(:disabled), .primary-button:active:not(:disabled) { transform: none; }
+.secondary-button { background: rgba(var(--accent-rgb), .08); border-color: var(--border); }
+.compact-button { min-height: 36px; }
+:is(.icon-button, .title-action, .notification-toast-close, .favorite-star, .star-button) { display: inline-grid; place-items: center; flex-shrink: 0; }
+.icon-button { width: 36px; height: 36px; border-radius: var(--ui-control-radius); background: rgba(var(--accent-rgb), .04); border-color: var(--ui-line); }
+.icon-button:hover { background: var(--surface-hover); border-color: var(--border); }
+.icon-button > svg { display: block; margin: 0; }
+:is(.launch-profile-actions, .inspector-toolbar) .icon-button { width: 36px; height: 36px; }
+:is(.login-form, .launch-profile-form, .tool-form-grid, .tool-config-form) input,
+.tool-import-input, .direct-connect input, .search-box, .inspector-note textarea, .tool-config-editor {
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-control-radius);
+  background: rgba(0,0,0,.18);
+  color: var(--text);
+  transition: border-color var(--ui-fast) ease, box-shadow var(--ui-fast) ease;
+}
+:is(.login-form, .launch-profile-form, .tool-form-grid, .tool-config-form) input { min-height: 38px; font-size: 12px; }
+input::placeholder, textarea::placeholder { color: var(--text-muted); opacity: .75; }
+:is(input, textarea):focus-visible, .search-box:focus-within { border-color: var(--accent-hover); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .1); }
+button:focus-visible, [role="button"]:focus-visible, summary:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 3px; }
+:is(.filter-chip, .tag, .playtime-periods, .tool-config-tabs, .theme-option) { border-color: var(--ui-line); }
+:is(.playtime-periods, .tool-config-tabs) { padding: 4px; background: rgba(var(--accent-rgb), .04); border-radius: 12px; }
+:is(.playtime-periods, .tool-config-tabs) button { min-height: 34px; transform: none; }
+:is(.playtime-periods, .tool-config-tabs) button:hover { transform: none; }
+:is(.empty-state, .tool-empty, .notification-empty, .monitoring-empty, .launch-profiles-empty) { color: var(--text-muted); }
+.empty-state { min-height: 200px; padding: 28px; border: 1px dashed var(--ui-line); border-radius: var(--ui-radius); background: rgba(var(--accent-rgb), .025); }
+:is(.empty-icon, .news-icon, .tool-card-icon, .playtime-stat-icon, .fatal-icon) { border: 1px solid var(--border); border-radius: 14px; background: rgba(var(--accent-rgb), .09); color: var(--accent-hover); }
+:is(.inline-error, .form-error, .monitoring-error) { border-radius: var(--ui-control-radius); color: var(--danger); }
+.notification-toast { z-index: 70; }
+.account-menu { border-radius: 16px; }
+:is(.account-option, .notification-item, .command-palette-item) { border-radius: var(--ui-control-radius); transition: background var(--ui-fast) ease, color var(--ui-fast) ease; }
+.notification-item:hover, .account-option:hover, .command-palette-item.selected { background: rgba(var(--accent-rgb), .1); }
+.notification-journal { border-radius: var(--ui-radius); }
+
+/* Catalog: optional tools share one compact row; server cards remain the main content. */
+.shell-update-banner { display: block; }
+.login-update-notice { position: fixed; left: 24px; right: 24px; bottom: 20px; z-index: 20; }
+.login-update-notice .shell-update-banner { max-width: 900px; margin: 0 auto; background: var(--popover-bg); }
+.launcher-update-body { display: flex; align-items: center; gap: 12px; width: 100%; }
+.launcher-update-body > svg { flex-shrink: 0; color: var(--accent-hover); }
+.launcher-update-copy { flex: 1; min-width: 0; }
+.launcher-update-copy strong { font-size: 13px; font-weight: 600; }
+.launcher-update-copy p { margin: 6px 0 0; color: var(--text-muted); line-height: 1.6; font-size: 12px; }
+.launcher-update-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.launcher-update-panel .launcher-update-body { padding: 20px; flex-wrap: wrap; }
+.launcher-update-panel .launcher-update-copy { min-width: 160px; }
+.launcher-update-progress { height: 4px; margin-top: 12px; overflow: hidden; border-radius: 99px; background: var(--surface-hover); }
+.launcher-update-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 180ms ease; }
+.launcher-update-release-link { margin: 0 20px 20px; }
+@media (max-width: 920px) { .launcher-update-body { flex-wrap: wrap; } }
+.catalog-page .toolbar { margin-bottom: 12px; }
+.catalog-utilities { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+.catalog-utility-toggle { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 7px 10px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--text-muted); font-size: 11px; transition: color var(--ui-fast) ease, background var(--ui-fast) ease, border-color var(--ui-fast) ease; }
+.catalog-utility-toggle:hover { color: var(--text); background: rgba(var(--accent-rgb), .06); }
+.catalog-utility-toggle[aria-expanded="true"] { color: var(--accent-hover); border-color: var(--border); background: rgba(var(--accent-rgb), .09); }
+.catalog-utility-toggle > .lucide-chevron-down { transition: transform 180ms var(--ui-ease); }
+.catalog-utility-toggle[aria-expanded="true"] > .lucide-chevron-down { transform: rotate(180deg); }
+.utility-count { padding: 1px 5px; border-radius: 5px; background: rgba(var(--accent-rgb), .08); font-size: 10px; font-variant-numeric: tabular-nums; }
+.utility-warning { color: var(--warning); }
+.catalog-result-count { margin-left: auto; padding: 8px 0 8px 8px; color: var(--text-muted); font-size: 10px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.catalog-utility-panel[hidden] { display: none; }
+.catalog-utility-panel:not([hidden]) { margin-bottom: 20px; animation: mados-page-in var(--ui-reveal) var(--ui-ease) both; }
+.catalog-utility-panel > :is(.monitoring-section, .launch-profiles, .direct-connect) { margin: 0; }
+.catalog-utility-panel .direct-connect { border-color: var(--ui-line); background: var(--ui-card); }
+.catalog-monitoring-warning { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; color: var(--warning); font-size: 11px; }
+.catalog-monitoring-warning .text-link { margin-left: auto; font-size: 11px; }
+
+/* Tools: one primary process action, optional maintenance in a shared menu. */
+.tools-page :is(.tool-import-card, .tool-server-card) { min-height: 0; }
+.tool-import-form > [hidden] { display: none; }
+.local-server-actions { gap: 8px; }
+.local-server-primary { min-width: 148px; justify-content: center; }
+.local-server-actions > .action-menu-trigger { margin-left: auto; }
+.tools-page .local-server-meta { margin-bottom: 16px; line-height: 1.6; flex-wrap: wrap; }
+.mados-action-menu { position: fixed; z-index: 230; overflow: auto; padding: 6px; border: 1px solid var(--border); border-radius: 13px; background: var(--popover-bg); box-shadow: var(--shadow); animation: mados-pop-in 180ms var(--ui-ease) both; }
+.mados-action-menu button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 36px; padding: 9px 10px; border-radius: 8px; background: transparent; color: var(--text); font-size: 12px; text-align: left; }
+.mados-action-menu button svg { flex-shrink: 0; color: var(--text-muted); }
+.mados-action-menu button:is(:hover, :focus-visible):not(:disabled) { background: rgba(var(--accent-rgb), .1); outline: 0; }
+.mados-action-menu button:is(:hover, :focus-visible):not(:disabled) svg { color: var(--accent-hover); }
+.mados-action-menu .danger-text, .mados-action-menu .danger-text svg { color: var(--danger); }
+.mados-action-menu .menu-separated { margin-top: 7px; position: relative; }
+.mados-action-menu .menu-separated::before { content: ""; position: absolute; inset: -4px 8px auto; height: 1px; background: var(--ui-line); }
+/* Chromium's standard thin/color properties override custom scrollbar shapes.
+   Keep one owner for every scroll area, including menus, logs and text fields. */
+* { scrollbar-width: auto; scrollbar-color: auto; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-track:vertical { margin-block: 8px; }
+*::-webkit-scrollbar-track:horizontal { margin-inline: 8px; }
+*::-webkit-scrollbar-thumb { min-height: 36px; min-width: 36px; border: 2px solid transparent; border-radius: 999px; background: color-mix(in srgb, var(--text-muted) 32%, transparent); background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--accent-hover) 65%, transparent); }
+*::-webkit-scrollbar-thumb:active { background-color: var(--accent-hover); }
+*::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+*::-webkit-scrollbar-corner { background: transparent; }
+/* Preserve the catalog's scroll position and gutter while attention is in the inspector. */
+.app-shell:has(.server-inspector) .content-scroll:not(:hover):not(:focus-within)::-webkit-scrollbar-thumb { background-color: transparent; }
+
+/* Shared select menu is portalled so it cannot be clipped by card overflow. */
+.mados-select-trigger { display: inline-flex; align-items: center; justify-content: space-between; min-width: 148px; max-width: 100%; padding: 0 12px; border: 1px solid var(--border); background: rgba(var(--accent-rgb), .06); color: var(--text); text-align: left; }
+.mados-select-trigger > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mados-select-trigger > svg { flex-shrink: 0; color: var(--accent-hover); }
+.mados-select-trigger .lucide-chevron-down { transition: transform 180ms var(--ui-ease); }
+.mados-select-trigger .rotated { transform: rotate(180deg); }
+.mados-select-trigger:hover, .mados-select-trigger[aria-expanded="true"] { background: var(--surface-hover); }
+.mados-select-menu { position: fixed; z-index: 220; overflow: auto; padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--popover-bg); box-shadow: var(--shadow); animation: mados-pop-in 170ms var(--ui-ease) both; }
+.mados-select-menu button { width: 100%; min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 16px; text-align: left; padding: 8px 10px; border-radius: 8px; background: transparent; color: var(--text); font-size: 12px; }
+.mados-select-menu button:is(:hover, :focus-visible) { background: rgba(var(--accent-rgb), .12); outline: 0; }
+.mados-select-menu button[aria-selected="true"] { color: var(--accent-hover); }
+.mados-select-menu button > span { overflow-wrap: anywhere; }
+
+.mados-dialog-overlay { position: fixed; inset: 0; z-index: 300; display: grid; place-items: center; padding: 24px; background: rgba(5,3,5,.7); backdrop-filter: blur(6px); animation: mados-fade 150ms ease both; }
+.mados-dialog { width: min(440px, 100%); max-height: calc(100vh - 48px); overflow: auto; padding: 28px; border: 1px solid var(--border); border-radius: 20px; background: var(--ui-elevated); box-shadow: var(--shadow); animation: mados-pop-in var(--ui-reveal) var(--ui-ease) both; }
+.mados-dialog-symbol { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--border); border-radius: 14px; background: rgba(var(--accent-rgb), .1); color: var(--accent-hover); margin-bottom: 18px; }
+.mados-dialog h2 { margin: 0 0 12px; font-size: 21px; letter-spacing: -.025em; }
+.mados-dialog p { margin: 0; font-size: 13px; line-height: 1.7; color: var(--text-muted); overflow-wrap: anywhere; }
+.mados-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+.destructive-button { background: var(--danger); box-shadow: 0 6px 20px rgba(255,66,80,.13); }
+.mados-tooltip { position: fixed; z-index: 350; width: max-content; max-width: min(280px, calc(100vw - 24px)); padding: 8px 11px; transform: translate(-50%, -100%); border: 1px solid var(--border); border-radius: 9px; background: var(--popover-bg); color: var(--text); font-size: 11px; line-height: 1.5; box-shadow: 0 8px 24px rgba(0,0,0,.25); pointer-events: none; overflow-wrap: anywhere; animation: mados-fade 120ms ease both; }
+.mados-tooltip.below { transform: translateX(-50%); }
+
+.server-mark { display: inline-grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 10px; background: linear-gradient(145deg, rgba(var(--accent-rgb), .17), rgba(var(--accent-rgb), .045)); color: var(--accent-hover); }
+.server-mark svg { width: 60%; height: 60%; }
+.inspector-server-icon.server-mark { flex: 0 0 54px; width: 54px; height: 54px; border-radius: 16px; }
+.recent-connection-head .server-mark { margin-right: 4px; }
+.recent-connection-head time { flex: 1; }
+.server-handoff-flight { position: fixed; z-index: 240; pointer-events: none; transform-origin: center; box-shadow: 0 0 20px rgba(var(--accent-rgb), .18); }
+[data-server-address].server-inspector { isolation: isolate; }
+
+/* Semantic icon reactions are shared by navigation, forms, cards and menus. */
+:where(.app-shell, .mados-dialog, .mados-select-menu, .mados-action-menu) :where(button, summary):where(:hover, :focus-visible):not(:disabled) > svg:where(:not(.spin):not(.icon-loading):not(.icon-refreshing):not(.refresh-once):not(.icon-pulse)) { transform: none; animation: mados-icon-greet 420ms var(--ui-ease) both; }
+:is(.app-shell, .mados-dialog, .mados-action-menu) :is(button, summary):is(:hover, :focus-visible):not(:disabled) > :is(.lucide-settings, .lucide-refresh-cw, .lucide-rotate-cw):not(.spin):not(.icon-loading):not(.icon-refreshing):not(.refresh-once) { animation: gear-spin 700ms ease both; }
+:is(.app-shell, .mados-dialog, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > :is(.lucide-play, .lucide-arrow-right, .action-arrow) { animation: station-forward 480ms ease both; }
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-external-link { animation: station-external 450ms ease both; }
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-bell { animation: mados-bell 550ms ease both; transform-origin: 50% 15%; }
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > :is(.lucide-globe2, .lucide-clock3, .lucide-history) { animation: station-history 600ms ease both; }
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > :is(.lucide-gamepad2, .lucide-server-cog) { animation: station-gamepad 600ms ease both; }
+:is(.app-shell, .mados-dialog, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-save:not(.icon-pulse) { animation: station-save 450ms ease both; }
+:is(.app-shell, .mados-dialog, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > :is(.lucide-x, .lucide-square) { animation: station-close 420ms ease both; }
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-trash2 { animation: station-trash 450ms ease both; }
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-folder-open { animation: station-map 500ms ease both; }
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-star { animation: star-pop 500ms ease both; }
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-download:not(.icon-loading):not(.icon-refreshing) { animation: mados-download-once 480ms ease both; }
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-search { animation: station-signal 480ms ease both; }
+/* Arrows with a persistent open/closed orientation must retain that state. */
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible) > :is(.lucide-chevron-down, .lucide-chevron-up) { animation: none; }
+.app-shell .dock-expand > svg.expanded, .mados-select-trigger > svg.rotated { transform: rotate(180deg) !important; }
+:is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):disabled > svg:not(.spin):not(.icon-loading) { animation: none; transform: none; }
+.app-shell .nav-item.active .clock-icon { animation: clock-open 520ms var(--ui-ease) both; }
+.server-card:hover .server-mark svg, .favorite-card:hover .server-mark svg, .recent-connection-card:hover .server-mark svg { animation: station-gamepad 600ms ease both; }
+
+@keyframes mados-page-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes mados-pop-in { from { opacity: 0; transform: translateY(5px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes mados-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mados-icon-greet { 0%,100% { transform: none; } 45% { transform: translateY(-2px) scale(1.1); } }
+@keyframes mados-bell { 0%,100% { transform: none; } 20% { transform: rotate(-18deg); } 45% { transform: rotate(15deg); } 70% { transform: rotate(-7deg); } }
+@keyframes mados-download-once { 0%,100% { transform: none; } 45% { transform: translateY(3px); } 75% { transform: translateY(-1px); } }
+
+@media (max-width: 920px) {
+  .page-heading { flex-wrap: wrap; margin-bottom: 20px; }
+  .page-heading h1 { font-size: 25px; }
+  .mados-select-trigger.sort-select { min-width: 140px; }
+  .settings-layout { gap: 16px; }
+}
+/* Positioning transforms stay intact; only interactive movement is disabled. */
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+.reduce-motion :is(button, summary, [role="button"]) svg,
+.reduce-motion :is(.page-enter, .favorite-card, .server-card, .news-card, .playtime-server-card, .recent-connection-card, .primary-button, .playtime-periods button) { transform: none !important; }
+.reduce-motion .toggle span { transform: none !important; }
+.reduce-motion .toggle.checked span { transform: translateX(15px) !important; }
+.reduce-motion .server-handoff-flight { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  :is(button, summary, [role="button"]) svg,
+  :is(.page-enter, .favorite-card, .server-card, .news-card, .playtime-server-card, .recent-connection-card, .primary-button, .playtime-periods button) { transform: none !important; }
+  .toggle span { transform: none !important; }
+  .toggle.checked span { transform: translateX(15px) !important; }
+  .server-handoff-flight { display: none; }
+}

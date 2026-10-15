@@ -2,7 +2,7 @@ import { InstallerFailure, type ReleaseInfo } from "../contracts/installer";
 
 const RELEASE_API_URL = "https://api.github.com/repos/Endennsss/mados_launcher/releases/latest";
 const ASSET_NAME = "Mados.Launcher.Windows.x64.zip";
-const USER_AGENT = "Mados-Installer/0.40.3";
+const USER_AGENT = "Mados-Installer/0.41.0";
 
 type GithubAsset = {
   name?: unknown;

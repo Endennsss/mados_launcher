@@ -1,6 +1,6 @@
 {
   "name": "mados-launcher",
-  "version": "0.40.3",
+  "version": "0.41.0",
   "description": "Mados Launcher for Space Station 14",
   "author": "Mados Launcher contributors",
   "main": "dist/main/main.js",
@@ -33,6 +33,7 @@
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "js-yaml": "^4.3.2",
     "jsdom": "^25.0.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
@@ -53,6 +54,10 @@
     "icon": "src/renderer/assets/cat-logo.png",
     "extraResources": [
       {
+        "from": "build/mados-update.yml",
+        "to": "mados-update.yml"
+      },
+      {
         "from": "staging/worker",
         "to": "worker",
         "filter": [
@@ -71,7 +76,7 @@
     ],
     "win": {
       "icon": "src/renderer/assets/cat-logo.ico",
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "target": [
         "nsis",
         "zip"
@@ -110,4 +115,3 @@
     }
   }
 }
-

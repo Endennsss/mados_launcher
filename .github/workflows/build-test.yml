@@ -42,6 +42,7 @@ jobs:
     - run: npm ci
     - run: npm run typecheck
     - run: npm test -- --run
+    - run: node --test tools/assemble-release.test.mjs
     - run: npm run build
 
   package-windows:

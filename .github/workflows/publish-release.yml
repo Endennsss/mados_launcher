@@ -67,6 +67,11 @@ jobs:
           cache-dependency-path: Mados.Launcher/package-lock.json
       - name: Install frontend dependencies
         run: npm ci
+      - name: Verify tag matches launcher version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          MADOS_RELEASE_TAG: ${{ github.ref_name }}
+        run: node -e "const version=require('./package.json').version; if(process.env.MADOS_RELEASE_TAG !== 'v'+version) throw Error('Update package.json version before tagging a release');"
       - name: Build frontend
         run: npm run build
       - name: Stage Release worker and Loader
@@ -75,7 +80,12 @@ jobs:
           MADOS_WORKER_RID: ${{ matrix.rid }}
         run: npm run prepare-worker
       - name: Package release
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never --config.directories.output=../artifacts/mados-release-${{ matrix.name }}
+      - name: Write Windows updater checksums
+        if: matrix.platform == 'win'
+        run: node tools/release-checksums.mjs ../artifacts/mados-release-${{ matrix.name }}
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -85,27 +95,71 @@ jobs:
             artifacts/mados-release-${{ matrix.name }}/Mados*
             artifacts/mados-release-${{ matrix.name }}/latest*.yml
 
+  installer:
+    name: Build Windows installer
+    runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: Mados.Installer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Mados.Installer/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Package bootstrap installer (unsigned)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --win --x64 --config electron-builder.yml --publish never --config.directories.output=../artifacts/mados-release-installer
+      - run: node scripts/verify-package.mjs ../artifacts/mados-release-installer/win-unpacked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mados-release-installer
+          if-no-files-found: error
+          path: artifacts/mados-release-installer/Mados.Installer.Windows.x64.exe
+
   publish:
     name: Publish GitHub release
-    needs: build
+    needs: [build, installer]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Mados.Launcher/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: Mados.Launcher
+      - run: node --test tools/assemble-release.test.mjs
+        working-directory: Mados.Launcher
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: mados-release-*
           path: release-assets
-      - name: Create or update GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Mados Launcher ${{ github.ref_name }}
-          generate_release_notes: true
-          files: |
-            release-assets/**/Mados*
-            release-assets/**/latest*.yml
-          fail_on_unmatched_files: true
-          overwrite_files: true
+      - name: Verify artifacts and merge architecture update manifests
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node Mados.Launcher/tools/assemble-release.mjs release-assets release-upload "${RELEASE_TAG#v}"
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          notes="docs/releases/${RELEASE_TAG}.md"
+          test -f "$notes"
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-state.txt 2>/dev/null; then
+            test "$(cat release-state.txt)" = true || { echo 'Refusing to overwrite a published release'; exit 1; }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Mados Launcher $RELEASE_TAG" --notes-file "$notes"
+          fi
+          gh release upload "$RELEASE_TAG" release-upload/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest --title "Mados Launcher $RELEASE_TAG" --notes-file "$notes"

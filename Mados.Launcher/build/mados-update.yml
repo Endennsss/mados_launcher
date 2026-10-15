@@ -1,0 +1,4 @@
+provider: github
+owner: Endennsss
+repo: mados_launcher
+updaterCacheDirName: mados-launcher-updater
