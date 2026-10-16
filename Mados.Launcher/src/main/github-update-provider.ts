@@ -8,6 +8,7 @@ const assetSchema = z.object({ name: z.string(), size: z.number().int().positive
 const releaseSchema = z.object({
   tag_name: z.string().regex(/^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/),
   draft: z.literal(false), prerelease: z.literal(false), published_at: z.string().datetime(), assets: z.array(assetSchema),
+  body: z.string().nullable().optional(),
 });
 
 function assetUrl(url: string, tag: string, name: string): string {
@@ -28,7 +29,7 @@ export function selectWindowsRelease(payload: unknown, arch: string) {
   assetUrl(asset.browser_download_url, release.tag_name, name);
   const checksum = release.assets.find(item => item.name === `${name}.sha512`);
   if (checksum) assetUrl(checksum.browser_download_url, release.tag_name, checksum.name);
-  return { version: release.tag_name.replace(/^v/, ""), asset, sha256: digest[1].toLowerCase(), checksum, publishedAt: release.published_at };
+  return { version: release.tag_name.replace(/^v/, ""), asset, sha256: digest[1].toLowerCase(), checksum, publishedAt: release.published_at, releaseNotes: release.body?.slice(0,64000) };
 }
 
 /** GitHub's stable release is authoritative; Windows archives need no latest.yml. */
@@ -49,7 +50,7 @@ export class GitHubWindowsUpdateProvider extends Provider<UpdateInfo> {
     // type still requires sha512, so bridge that one field for older releases.
     // New releases publish SHA512 too, enabling its persistent download cache.
     return {
-      version: selected.version, releaseDate: selected.publishedAt, path: selected.asset.browser_download_url,
+      version: selected.version, releaseDate: selected.publishedAt, releaseNotes: selected.releaseNotes, path: selected.asset.browser_download_url,
       sha512, files: [{ url: selected.asset.browser_download_url, size: selected.asset.size, sha2: selected.sha256, sha512 }],
     } as unknown as UpdateInfo;
   }

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { CdnImportRequest, CdnInspection, DiscordPresenceStatus, FavoriteMonitorSummary, LauncherApi, LauncherNotification, LaunchProfile, LocalServerBackup, LocalServerConfig, LocalServerCreateInput, LocalServerProfile, LocalServerSnapshot, LocalServerUpdateInput, PortTestResult, ServerNote, StartupState, WorkerEvent } from "../contracts/launcher";
 
 const api: LauncherApi = {
+  addReplayFile: (file:File) => ipcRenderer.invoke('replay-file-drop',webUtils.getPathForFile(file)),
   invoke<T = unknown>(method: string, params?: unknown): Promise<T> {
     return ipcRenderer.invoke("worker-invoke", method, params) as Promise<T>;
   },

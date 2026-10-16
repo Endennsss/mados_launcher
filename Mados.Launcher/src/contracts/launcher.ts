@@ -1,8 +1,20 @@
+export type DiagnosticCheck = { id:string; title:string; status:"passed"|"warning"|"failed"|"info"; message:string; action?:"login"|"retry"|"connect"|"logs"|"storage"|null };
+export type DiagnosticReport = { address:string; checkedAt:string; checks:DiagnosticCheck[] };
+export type StorageItem = { id:string; category:string; name:string; bytes:number; lastUsed:string|null; canDelete:boolean; protectedReason:string|null };
+export type StorageScan = { capturedAt:string; totalBytes:number; freeBytes:number|null; blockedReason:string|null; categories:Array<{id:string;name:string;bytes:number;description:string}>;items:StorageItem[];warnings:string[] };
+export type StoragePreview = { planId:string; expiresAt:string; estimatedBytes:number; items:StorageItem[] };
+export type StorageCleanResult = { removedItems:number; freedBytes:number; warnings:string[] };
+
 export type WorkerError = {
   code: string;
   message: string;
   details?: unknown;
 };
+
+export type CacheTransferState={stage:'idle'|'copying'|'verifying'|'ready'|'cancelled'|'error';completedBytes:number;totalBytes:number;destination:string|null;message?:string|null};
+export type CacheInfo={paths:{userPath:string;localPath:string};state:CacheTransferState;warnings:string[]};
+export type ReplayItem={id:string;name:string;notes:string;watched:boolean;fileName:string;bytes:number;engineVersion:string;fork:string|null;build:string|null;addedAt:string;available:boolean};
+export type SeatWatchState={status:'idle'|'checking'|'watching'|'unknown'|'offline'|'available'|'expired';accountId?:string|null;address?:string|null;name?:string|null;players?:number|null;limit?:number|null;expiresAt?:string|null;message?:string|null};
 
 export type WorkerEvent = {
   v: 1;
@@ -121,6 +133,8 @@ export type ServerListResult = {
 };
 
 export type Settings = {
+  minimizeOnPlay?: boolean;
+  restoreAfterPlay?: boolean;
   compatMode: boolean;
   verboseLogging: boolean;
   overrideAssets: boolean;
@@ -141,6 +155,9 @@ export type NewsItem = {
   date?: string | null;
   source?: string | null;
   summary?: string | null;
+  body?: string | null;
+  version?: string | null;
+  prerelease?: boolean;
 };
 
 export type ConnectionProgress = {
@@ -153,6 +170,8 @@ export type ConnectionProgress = {
 export type PlaytimePeriod = "all" | "today" | "sevenDays";
 
 export type PlaytimeSummary = {
+  generatedAt?: string | null;
+  dailyActivity?: Array<{ date: string; totalSeconds: number }>;
   accountId: string | null;
   period: PlaytimePeriod;
   trackedSince: string | null;
@@ -211,8 +230,10 @@ export type LaunchProfile = {
 };
 
 export type LauncherNotification = {
+  address?: string | null;
+  accountId?: string | null;
   id: string;
-  kind: "favorite-online" | "launcher-update" | "game-update";
+  kind: "favorite-online" | "launcher-update" | "game-update" | "server-slot";
   title: string;
   message: string;
   createdAt: string;
@@ -338,6 +359,7 @@ export type PortTestResult = {
 };
 
 export type LauncherApi = {
+  addReplayFile(file:File):Promise<ReplayItem>;
   invoke<T = unknown>(method: string, params?: unknown): Promise<T>;
   serverNotes: {
     list(): Promise<ServerNote[]>;
@@ -414,4 +436,9 @@ export type ShellUpdateState = {
   percent?: number;
   message?: string;
   checkedAt?: string;
+  releaseNotes?: string;
+  releaseDate?: string;
+  transferred?: number;
+  total?: number;
+  bytesPerSecond?: number;
 };

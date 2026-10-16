@@ -367,7 +367,9 @@ public sealed class DataManager : ObservableObject
     }
 
     [SuppressMessage("ReSharper", "UseAwaitUsing")]
-    public async void CommitConfig()
+    public async void CommitConfig() => await CommitConfigAsync();
+
+    public async Task CommitConfigAsync()
     {
         if (_dbCommandQueue.Count == 0)
             return;
@@ -376,12 +378,13 @@ public sealed class DataManager : ObservableObject
         _dbCommandQueue.Clear();
         Log.Debug("Committing config to disk, running {DbCommandCount} commands", commands.Length);
 
-        await Task.Run(async () =>
+        // Acquire in call order before scheduling disk work, so a later commit cannot overtake this one.
+        await _dbWritingSemaphore.WaitAsync();
+        await Task.Run(() =>
         {
             // SQLite is thread safe and won't have any problems with having multiple writers
             // (but they'll be synchronous).
             // That said, we need something to wait on when we shut down to make sure everything is written, so.
-            await _dbWritingSemaphore.WaitAsync();
             try
             {
                 using var connection = new SqliteConnection(GetCfgDbConnectionString());
@@ -424,6 +427,7 @@ public sealed class DataManager : ObservableObject
 
     private void ChangeFavoriteServer(ChangeReason reason, FavoriteServer server)
     {
+        if (_restoringFavoriteCache) return;
         // Make immutable copy to avoid race condition bugs.
         var data = new
         {
@@ -443,6 +447,14 @@ public sealed class DataManager : ObservableObject
                 data
             );
         });
+    }
+
+    private bool _restoringFavoriteCache;
+    public void RestoreFavoriteCache(FavoriteServer[] previous)
+    {
+        _restoringFavoriteCache=true;
+        try { _favoriteServers.Edit(cache=>{cache.Clear();cache.AddOrUpdate(previous);}); }
+        finally { _restoringFavoriteCache=false; }
     }
 
     private void ChangeLogin(ChangeReason reason, LoginInfo login)

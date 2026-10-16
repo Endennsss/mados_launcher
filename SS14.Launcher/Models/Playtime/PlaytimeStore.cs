@@ -99,16 +99,18 @@ WHERE EndedAtUtc IS NULL;", commandTimeout: 10);
         }
     }
 
-    public PlaytimeSummary GetSummary(Guid accountId, PlaytimePeriod period, DateTimeOffset now)
+    public PlaytimeSummary GetSummary(Guid accountId, PlaytimePeriod period, DateTimeOffset now, TimeZoneInfo? timeZone = null)
     {
         if (accountId == Guid.Empty)
             return PlaytimeSummary.Empty(null, period);
 
         var end = now.ToUniversalTime();
+        var zone = timeZone ?? TimeZoneInfo.Local;
+        var today = TimeZoneInfo.ConvertTime(end, zone).Date;
         var start = period switch
         {
             PlaytimePeriod.All => DateTimeOffset.MinValue,
-            PlaytimePeriod.Today => StartOfLocalTodayUtc(end),
+            PlaytimePeriod.Today => LocalMidnightUtc(today, zone),
             PlaytimePeriod.SevenDays => end - TimeSpan.FromDays(7),
             _ => throw new ArgumentOutOfRangeException(nameof(period), period, null)
         };
@@ -167,7 +169,19 @@ WHERE EndedAtUtc IS NULL;", commandTimeout: 10);
             sessions.Length,
             summaries.Length,
             activeDto,
-            summaries);
+            summaries)
+        {
+            GeneratedAt = end,
+            DailyActivity = Enumerable.Range(0, 7).Select(index =>
+            {
+                var date = today.AddDays(index - 6);
+                var dayStart = LocalMidnightUtc(date, zone);
+                var nextDay = LocalMidnightUtc(date.AddDays(1), zone);
+                var dayEnd = nextDay < end ? nextDay : end;
+                return new PlaytimeDaySummary(date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    parsedRows.Sum(session => DurationSeconds(session.StartedAtUtc, session.EndedAtUtc ?? end, dayStart, dayEnd)));
+            }).ToArray()
+        };
     }
 
     public int ClearCompleted(Guid accountId)
@@ -221,10 +235,14 @@ CREATE INDEX IF NOT EXISTS IX_PlaySession_StartedAtUtc ON PlaySession(StartedAtU
         return connection;
     }
 
-    private static DateTimeOffset StartOfLocalTodayUtc(DateTimeOffset nowUtc)
+    private static DateTimeOffset LocalMidnightUtc(DateTime date, TimeZoneInfo zone)
     {
-        var local = nowUtc.ToLocalTime();
-        return new DateTimeOffset(local.Date, local.Offset).ToUniversalTime();
+        var local = DateTime.SpecifyKind(date, DateTimeKind.Unspecified);
+        // A few time zones skip midnight when entering daylight saving time.
+        while (zone.IsInvalidTime(local)) local = local.AddMinutes(1);
+        if (zone.IsAmbiguousTime(local))
+            return new DateTimeOffset(local, zone.GetAmbiguousTimeOffsets(local).Max()).ToUniversalTime();
+        return new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(local, zone), TimeSpan.Zero);
     }
 
     private static bool Overlaps(DateTimeOffset start, DateTimeOffset end, DateTimeOffset rangeStart, DateTimeOffset rangeEnd)
@@ -292,6 +310,10 @@ public sealed record PlaytimeSummary(
     PlaytimeActiveSession? ActiveSession,
     IReadOnlyList<PlaytimeServerSummary> Servers)
 {
+    public DateTimeOffset? GeneratedAt { get; init; }
+    public IReadOnlyList<PlaytimeDaySummary> DailyActivity { get; init; } = Array.Empty<PlaytimeDaySummary>();
     public static PlaytimeSummary Empty(Guid? accountId, PlaytimePeriod period)
         => new(accountId, period, null, 0, 0, 0, null, Array.Empty<PlaytimeServerSummary>());
 }
+
+public sealed record PlaytimeDaySummary(string Date, long TotalSeconds);

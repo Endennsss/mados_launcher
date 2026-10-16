@@ -41,7 +41,13 @@
     }
   ],
   "x-methods": {
-    "app": ["getState", "getVersion", "openDeepLink", "shutdown"],
+    "cache": ["info", "chooseFolder", "move", "cancel"],
+    "replays": ["list", "chooseFile", "add", "update", "remove", "play"],
+    "personal": ["export", "inspect", "restore", "recovery"],
+    "seatWatch": ["get", "start", "stop"],
+    "diagnostics": ["run", "openLogs"],
+    "storage": ["scan", "preview", "clean"],
+    "app": ["getState", "getVersion", "openDeepLink", "shutdown", "restart"],
     "auth": ["getAccounts", "login", "logout", "switchAccount"],
     "servers": ["list", "refresh", "info", "connect"],
     "favorites": ["list", "add", "remove"],
@@ -59,14 +65,68 @@
     "updates": ["getStatus", "start"],
     "connection": ["cancel", "confirmPrivacyPolicy"]
   },
+  "x-internal-methods": { "personal": ["snapshot", "apply"] },
+  "x-result-extensions": {
+    "news.list": {
+      "description": "Public RSS and GitHub news. The latest stable Mados release is retained independently of the compact feed limit. Body is plain text for RSS and limited Markdown for GitHub; never render as HTML.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["title", "link"],
+        "properties": {
+          "title": { "type": "string" }, "link": { "type": "string", "format": "uri" },
+          "date": { "type": ["string", "null"], "format": "date-time" },
+          "source": { "type": ["string", "null"] }, "summary": { "type": ["string", "null"] },
+          "body": { "type": ["string", "null"], "maxLength": 64000 },
+          "version": { "type": ["string", "null"] }, "prerelease": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "playtime.getSummary": {
+      "description": "Additive v1 fields. Daily activity always covers today and six previous local calendar days; the sevenDays summary period remains a rolling 168 hours.",
+      "properties": {
+        "generatedAt": { "type": ["string", "null"], "format": "date-time" },
+        "dailyActivity": { "type": "array", "maxItems": 7, "items": { "type": "object", "required": ["date", "totalSeconds"], "properties": { "date": { "type": "string", "format": "date" }, "totalSeconds": { "type": "integer", "minimum": 0 } }, "additionalProperties": false } }
+      }
+    }
+  },
   "x-shell-channels": ["get-update-state", "check-for-updates", "download-update", "install-update"],
   "x-events": [
     "shell.updateState",
     "app.ready", "app.startup", "app.error", "auth.changed", "servers.updated", "connection.started",
     "connection.progress", "connection.completed", "connection.failed", "update.progress",
-    "update.completed", "deepLink.received", "playtime.updated", "recentConnections.updated", "presence.updated", "settings.changed", "monitoring.updated", "monitoring.failed", "notification.created", "launchProfiles.updated", "cdn.progress", "cdn.completed", "cdn.failed", "localServer.status", "localServer.log", "localServer.configChanged", "localServer.error"
+    "update.completed", "deepLink.received", "playtime.updated", "recentConnections.updated", "presence.updated", "settings.changed", "monitoring.updated", "monitoring.failed", "notification.created", "launchProfiles.updated", "cache.progress", "seatWatch.updated", "cdn.progress", "cdn.completed", "cdn.failed", "localServer.status", "localServer.log", "localServer.configChanged", "localServer.error"
   ],
   "x-event-payloads": {
+    "cache.progress": {
+      "type": "object",
+      "required": ["stage", "completedBytes", "totalBytes", "destination"],
+      "properties": {
+        "stage": { "enum": ["idle", "copying", "verifying", "ready", "cancelled", "error"] },
+        "completedBytes": { "type": "integer", "minimum": 0 },
+        "totalBytes": { "type": "integer", "minimum": 0 },
+        "destination": { "type": ["string", "null"] },
+        "message": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "seatWatch.updated": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["idle", "checking", "watching", "unknown", "offline", "available", "expired"] },
+        "accountId": { "type": ["string", "null"] },
+        "address": { "type": ["string", "null"] },
+        "name": { "type": ["string", "null"] },
+        "players": { "type": ["integer", "null"] },
+        "limit": { "type": ["integer", "null"] },
+        "expiresAt": { "type": ["string", "null"] },
+        "message": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
     "shell.updateState": {
       "description": "Electron-owned update state; installation only after an explicit user action. Monotonic revision prevents stale renderer snapshots.",
       "type": "object",
@@ -78,7 +138,12 @@
         "version": { "type": "string" },
         "percent": { "type": "number", "minimum": 0, "maximum": 100 },
         "message": { "type": "string" },
-        "checkedAt": { "type": "string", "format": "date-time" }
+        "checkedAt": { "type": "string", "format": "date-time" },
+        "releaseNotes": { "type": "string", "maxLength": 64000 },
+        "releaseDate": { "type": "string", "format": "date-time" },
+        "transferred": { "type": "number", "minimum": 0 },
+        "total": { "type": "number", "minimum": 0 },
+        "bytesPerSecond": { "type": "number", "minimum": 0 }
       },
       "additionalProperties": false
     },
@@ -139,6 +204,12 @@
     "settings.changed": {
       "type": "object",
       "properties": {
+        "window": {
+          "type": "object",
+          "required": ["minimizeOnPlay", "restoreAfterPlay"],
+          "properties": { "minimizeOnPlay": { "type": "boolean" }, "restoreAfterPlay": { "type": "boolean" } },
+          "additionalProperties": false
+        },
         "discord": {
           "type": "object",
           "required": ["enabled", "showNickname"],
@@ -167,7 +238,7 @@
     "notification.created": {
       "type": "object",
       "required": ["id", "kind", "title", "message", "createdAt", "readAt"],
-      "properties": { "id": { "type": "string" }, "kind": { "type": "string" }, "title": { "type": "string" }, "message": { "type": "string" }, "createdAt": { "type": "string" }, "readAt": { "type": ["string", "null"] } },
+      "properties": { "id": { "type": "string" }, "kind": { "type": "string" }, "title": { "type": "string" }, "message": { "type": "string" }, "createdAt": { "type": "string" }, "readAt": { "type": ["string", "null"] }, "address": { "type": ["string", "null"], "description": "Sanitized ss14/ss14s server target; absent for legacy events" }, "accountId": { "type": ["string", "null"] } },
       "additionalProperties": false
     },
     "launchProfiles.updated": {

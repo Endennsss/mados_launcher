@@ -18,7 +18,9 @@ using SS14.Launcher.Models;
 using SS14.Launcher.Models.ContentManagement;
 using SS14.Launcher.Models.Data;
 using SS14.Launcher.Models.Logins;
+using SS14.Launcher.Models.Maintenance;
 using SS14.Launcher.Models.OverrideAssets;
+using SS14.Launcher.Models.Personal;
 using SS14.Launcher.Models.Playtime;
 using SS14.Launcher.Models.Presence;
 using SS14.Launcher.Models.RecentConnections;
@@ -32,7 +34,7 @@ namespace SS14.Launcher.Worker;
 /// launcher's existing services so the new UI cannot accidentally reimplement
 /// authentication, server discovery, content updates, or game launching.
 /// </summary>
-public sealed class WorkerHost
+public sealed partial class WorkerHost
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -80,6 +82,9 @@ public sealed class WorkerHost
     private PendingRecentConnection? _pendingRecentConnection;
     private Updater.UpdateStatus? _lastNotificationUpdateStatus;
     private readonly PresenceTracker _presence;
+    private readonly ManagedStorage _storage;
+    private readonly ConnectionDiagnostics _diagnostics;
+    private readonly MaintenanceGate _maintenanceGate;
 
     private WorkerHost(TextWriter output)
     {
@@ -110,6 +115,10 @@ public sealed class WorkerHost
         };
         _localServers = new LocalServerManager(_http, _localServerStore, cdnHttp: cdnHttp);
         _localServers.Changed += LocalServerOnChanged;
+        _maintenanceGate = new MaintenanceGate(StorageBusy);
+        _storage = new ManagedStorage(LauncherPaths.PathContentDb, LauncherPaths.DirEngineInstallations, LauncherPaths.DirModuleInstallations, LauncherPaths.DirLogs, Path.Combine(LauncherPaths.DirUserData,"local-servers"), StorageBusy);
+        _diagnostics = new ConnectionDiagnostics(new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){Timeout=TimeSpan.FromSeconds(7)},LauncherPaths.DirEngineInstallations,LauncherPaths.DirLocalData);
+        InitializeToolkit();
 
         _presence = new PresenceTracker(
             (address, cancel) => ServerStatusProbe.FetchAsync(_http, address, cancel),
@@ -132,6 +141,7 @@ public sealed class WorkerHost
         {
             SendEvent("app.startup", new { stage = "checking-data", message = "Проверяем данные…" });
             _launcherInfo.Initialize();
+            CleanupTransferredCache();
             _content.Initialize();
             _overrideAssets.Initialize();
             await _login.Initialize();
@@ -177,7 +187,7 @@ public sealed class WorkerHost
                 using var request = JsonDocument.Parse(line);
                 background = request.RootElement.TryGetProperty("method", out var method)
                     && method.ValueKind == JsonValueKind.String
-                    && method.GetString() is "tools.cdn.import" or "localServers.create" or "localServers.start" or "localServers.restart" or "servers.info";
+                    && method.GetString() is "tools.cdn.import" or "localServers.create" or "localServers.start" or "localServers.restart" or "servers.info" or "diagnostics.run" or "storage.scan" or "storage.preview" or "storage.clean" or "cache.move" or "replays.add";
             }
             catch (JsonException) { /* HandleLineAsync returns the protocol error. */ }
             if (background)
@@ -189,10 +199,13 @@ public sealed class WorkerHost
         }
 
         _shutdown.Cancel();
+        _cacheCancellation?.Cancel();
+        StopSeatWatch();
         lock (_cdnLock) _cdnCancellation?.Cancel();
         await _catalog.DisposeAsync();
         await Task.WhenAll(_catalogMonitoring);
         await Task.WhenAll(backgroundRequests);
+        if(_seatLoop!=null)await _seatLoop;
         _connectionCancellation?.Cancel();
         _presence.Dispose();
         _playtimeTracker.Stop();
@@ -308,8 +321,52 @@ public sealed class WorkerHost
 
     private async Task<object?> DispatchAsync(string method, JsonElement parameters)
     {
+        try
+        {
+            if(_cacheState.Stage=="ready"&&method is "servers.connect" or "content.openBundle" or "replays.play" or "updates.start" or "localServers.start" or "localServers.restart" or "launchProfiles.use")throw new WorkerRpcException(new WorkerError("CACHE_RESTART_REQUIRED","Кэш перенесён. Перезапустите Mados перед запуском."));
+            using var lease = method is "servers.connect" or "content.openBundle" or "updates.start" or "tools.cdn.import" or "localServers.create" or "localServers.start" or "localServers.restart" or "localServers.rollback" or "localServers.remove" ? _maintenanceGate.Use() : null;
+            return await DispatchCoreAsync(method,parameters);
+        }
+        catch(InvalidOperationException error) when(IsMaintenanceMethod(method))
+        { throw new WorkerRpcException(new WorkerError("MAINTENANCE_UNAVAILABLE",error.Message)); }
+        catch(Exception error) when((IsMaintenanceMethod(method))&&(error is IOException or UnauthorizedAccessException or Microsoft.Data.Sqlite.SqliteException))
+        { throw new WorkerRpcException(new WorkerError("MAINTENANCE_FAILED","Не удалось прочитать или обработать данные. Закройте игру и повторите попытку.")); }
+    }
+
+    private bool StorageBusy() => _connectionTask is {IsCompleted:false} || _cdnCancellation!=null || _localServers.GetStatus().Status is LocalServerStatus.Starting or LocalServerStatus.Running or LocalServerStatus.Stopping;
+    private async Task<object> StorageCleanAsync(JsonElement parameters)
+    {
+        using var lease=_maintenanceGate.Clean();var planId=RequiredString(parameters,"planId");
+        return await Task.Run(()=>_storage.Clean(planId),_shutdown.Token);
+    }
+    private async Task<object> StoragePreviewAsync(JsonElement parameters)
+    {
+        if(parameters.ValueKind!=JsonValueKind.Object||!parameters.TryGetProperty("ids",out var ids)||ids.ValueKind!=JsonValueKind.Array||ids.GetArrayLength()>500||ids.EnumerateArray().Any(id=>id.ValueKind!=JsonValueKind.String))throw new WorkerRpcException(new WorkerError("INVALID_PARAMS","Выберите элементы для очистки."));
+        var selection=ids.EnumerateArray().Select(id=>id.GetString()!).ToArray();
+        return await Task.Run(()=>_storage.Preview(selection),_shutdown.Token);
+    }
+    private async Task<object?> DispatchCoreAsync(string method, JsonElement parameters)
+    {
         return method switch
         {
+            "cache.info" => new { paths=_cacheTransfer.Info(), state=_cacheState, warnings=_cacheWarnings },
+            "cache.move" => await MoveCacheAsync(parameters),
+            "cache.cancel" => CancelCache(),
+            "replays.list" => _replays.List(RequireActiveAccountForNotes().ToString()),
+            "replays.add" => AddReplay(parameters),
+            "replays.update" => UpdateReplay(parameters),
+            "replays.remove" => RemoveReplay(parameters),
+            "replays.play" => PlayReplay(parameters),
+            "personal.snapshot" => PersonalSnapshot(),
+            "personal.apply" => await ApplyPersonalAsync(parameters),
+            "seatWatch.get" => _seatWatch.Snapshot,
+            "seatWatch.start" => StartSeatWatch(parameters),
+            "seatWatch.stop" => StopSeatWatch(),
+            "diagnostics.run" => await _diagnostics.RunAsync(RequiredString(parameters,"address"),_login.ActiveAccount?.Status==AccountLoginStatus.Available?"valid":_login.ActiveAccount?.Status==AccountLoginStatus.Expired?"expired":"missing",_shutdown.Token),
+            "diagnostics.openLogs" => new {path=LauncherPaths.DirLogs},
+            "storage.scan" => await Task.Run(()=>_storage.Scan(),_shutdown.Token),
+            "storage.preview" => await StoragePreviewAsync(parameters),
+            "storage.clean" => await StorageCleanAsync(parameters),
             "app.getState" => await GetStateAsync(),
             "app.getVersion" => new { version = LauncherVersion.Version?.ToString() ?? "unknown", name = "Mados Launcher" },
             "app.openDeepLink" => await OpenDeepLinkAsync(parameters),
@@ -401,6 +458,7 @@ public sealed class WorkerHost
                 authOverride = ConfigConstants.IsAuthOverride
             },
             discord = GetDiscordSettings()
+            ,window = GetWindowSettings()
         });
     }
 
@@ -425,6 +483,7 @@ public sealed class WorkerHost
 
     private async Task<object> LoginAsync(JsonElement parameters)
     {
+        StopSeatWatch();
         var username = RequiredString(parameters, "username");
         var password = RequiredString(parameters, "password");
         var tfaCode = OptionalString(parameters, "tfaCode");
@@ -463,6 +522,7 @@ public sealed class WorkerHost
 
     private async Task<object> LogoutAsync(JsonElement parameters)
     {
+        StopSeatWatch();
         var accountId = OptionalGuid(parameters, "accountId") ?? _login.ActiveAccountId;
         if (accountId == null || !_login.Logins.Lookup(accountId.Value).HasValue)
             throw new WorkerRpcException(new WorkerError("ACCOUNT_NOT_FOUND", "Account was not found"));
@@ -485,6 +545,7 @@ public sealed class WorkerHost
 
     private object SwitchAccount(JsonElement parameters)
     {
+        StopSeatWatch();
         var accountId = RequiredGuid(parameters, "accountId");
         if (!_login.Logins.Lookup(accountId).HasValue)
             throw new WorkerRpcException(new WorkerError("ACCOUNT_NOT_FOUND", "Account was not found"));
@@ -638,6 +699,9 @@ public sealed class WorkerHost
         var name = OptionalString(parameters, "name");
         try
         {
+            var key = PersonalData.NormalizeAddress(address) ?? address;
+            if (_data.FavoriteServers.Items.Any(f => (PersonalData.NormalizeAddress(f.Address) ?? f.Address) == key))
+                throw new ArgumentException("A server with that address is already a favorite.");
             _data.AddFavoriteServer(new FavoriteServer(name, address));
             _data.CommitConfig();
         }
@@ -652,28 +716,31 @@ public sealed class WorkerHost
     private object RemoveFavorite(JsonElement parameters)
     {
         var address = RequiredString(parameters, "address");
-        var favorite = _data.FavoriteServers.Lookup(address);
-        if (!favorite.HasValue)
+        var key = PersonalData.NormalizeAddress(address) ?? address;
+        var favorites = _data.FavoriteServers.Items
+            .Where(f => (PersonalData.NormalizeAddress(f.Address) ?? f.Address) == key).ToArray();
+        if (favorites.Length == 0)
             throw new WorkerRpcException(new WorkerError("FAVORITE_NOT_FOUND", "Favorite server was not found"));
 
-        _data.RemoveFavoriteServer(favorite.Value);
+        foreach (var favorite in favorites)
+            _data.RemoveFavoriteServer(favorite);
         _data.CommitConfig();
         return GetFavorites();
     }
 
     private async Task<object> GetNewsAsync()
     {
-        var items = new List<NewsDto>();
+        var items = new List<NewsEntry>();
 
         try
         {
             var feed = await FeedReader.ReadAsync(ConfigConstants.NewsFeedUrl);
-            items.AddRange(feed.Items.Select(item => new NewsDto(
+            items.AddRange(feed.Items.Select(item => new NewsEntry(
                 item.Title ?? "Space Station 14",
                 item.Link ?? ConfigConstants.NewsFeedUrl,
                 item.PublishingDate,
                 "Space Station 14",
-                StripHtml(item.Description))));
+                NewsContent.Summary(item.Description), NewsContent.PlainText(item.Content ?? item.Description))));
         }
         catch (Exception error) when (error is HttpRequestException or IOException or JsonException or TaskCanceledException)
         {
@@ -692,73 +759,54 @@ public sealed class WorkerHost
         if (items.Count == 0)
             throw new WorkerRpcException(new WorkerError("NEWS_UNAVAILABLE", "News could not be loaded"));
 
-        return items
-            .Where(item => !string.IsNullOrWhiteSpace(item.Link))
-            .GroupBy(item => item.Link, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.OrderByDescending(item => item.Date ?? DateTime.MinValue).First())
-            .OrderByDescending(item => item.Date ?? DateTime.MinValue)
-            .Take(20)
+        return NewsContent.SelectForFeed(items)
             .Select(item => new
             {
                 title = item.Title,
                 link = item.Link,
                 date = item.Date,
                 source = item.Source,
-                summary = item.Summary
+                summary = item.Summary,
+                body = item.Body,
+                version = item.Version,
+                prerelease = item.Prerelease
             }).ToArray();
     }
 
-    private async Task<IReadOnlyList<NewsDto>> GetGitHubNewsAsync()
+    private async Task<IReadOnlyList<NewsEntry>> GetGitHubNewsAsync()
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, ConfigConstants.MadosLauncherGitHubReleasesApi);
-        request.Headers.Accept.ParseAdd("application/vnd.github+json");
-        request.Headers.UserAgent.ParseAdd("Mados.Launcher");
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
+        // Fetch the stable release independently so previews cannot push it out of the feed.
+        var results = await Task.WhenAll(Fetch(ConfigConstants.MadosLauncherGitHubReleasesApi, false),
+            Fetch($"https://api.github.com/repos/{ConfigConstants.MadosLauncherGitHubRepository}/releases/latest", true));
+        return results.SelectMany(items => items).ToArray();
 
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        if (document.RootElement.ValueKind != JsonValueKind.Array)
-            throw new JsonException("GitHub releases response is not an array");
-
-        var result = new List<NewsDto>();
-        foreach (var release in document.RootElement.EnumerateArray())
+        async Task<IReadOnlyList<NewsEntry>> Fetch(string url, bool latest)
         {
-            if (release.TryGetProperty("draft", out var draft) && draft.ValueKind == JsonValueKind.True)
-                continue;
-
-            var link = JsonString(release, "html_url");
-            if (string.IsNullOrWhiteSpace(link))
-                continue;
-
-            var title = JsonString(release, "name") ?? JsonString(release, "tag_name") ?? "Mados Launcher release";
-            var dateText = JsonString(release, "published_at") ?? JsonString(release, "created_at");
-            DateTime? date = DateTime.TryParse(dateText, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedDate)
-                ? parsedDate
-                : null;
-            var summary = StripHtml(JsonString(release, "body"));
-            result.Add(new NewsDto(title, link, date, "GitHub · Mados Launcher", summary));
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Accept.ParseAdd("application/vnd.github+json");
+                request.Headers.UserAgent.ParseAdd("Mados.Launcher");
+                using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                if (latest && response.StatusCode == System.Net.HttpStatusCode.NotFound) return Array.Empty<NewsEntry>();
+                response.EnsureSuccessStatusCode();
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                if (latest)
+                {
+                    if (document.RootElement.ValueKind != JsonValueKind.Object) throw new JsonException("Expected a GitHub release object");
+                    var release = NewsContent.FromGitHub(document.RootElement);
+                    return release is { Prerelease: false } ? new[] { release with { IsLatestStable = true } } : Array.Empty<NewsEntry>();
+                }
+                if (document.RootElement.ValueKind != JsonValueKind.Array) throw new JsonException("Expected a GitHub releases array");
+                return document.RootElement.EnumerateArray().Select(NewsContent.FromGitHub).Where(item => item != null).Cast<NewsEntry>().ToArray();
+            }
+            catch (Exception error) when (error is HttpRequestException or IOException or JsonException or TaskCanceledException)
+            {
+                Log.Warning(error, "GitHub news source unavailable (latest stable: {Latest})", latest);
+                return Array.Empty<NewsEntry>();
+            }
         }
-
-        return result;
     }
-
-    private static string? JsonString(JsonElement element, string property)
-    {
-        return element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-    }
-
-    private static string? StripHtml(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return null;
-
-        var plain = Regex.Replace(value, "<[^>]+>", " ");
-        plain = Regex.Replace(plain, @"\s+", " ").Trim();
-        return plain.Length > 220 ? $"{plain[..217]}…" : plain;
-    }
-
     private object GetSettings()
     {
         return new
@@ -775,6 +823,8 @@ public sealed class WorkerHost
             discordPresenceEnabled = _data.GetCVar(CVars.DiscordPresenceEnabled),
             discordPresenceShowNickname = _data.GetCVar(CVars.DiscordPresenceShowNickname),
             favoriteAvailabilityNotifications = _data.GetCVar(CVars.FavoriteAvailabilityNotifications)
+            ,minimizeOnPlay = _data.GetCVar(CVars.MinimizeOnPlay)
+            ,restoreAfterPlay = _data.GetCVar(CVars.RestoreAfterPlay)
         };
     }
 
@@ -789,6 +839,8 @@ public sealed class WorkerHost
 
     private object UpdateSettings(JsonElement parameters)
     {
+        if(TryGetProperty(parameters,"minimizeOnPlay",out var minimize))_data.SetCVar(CVars.MinimizeOnPlay,minimize.GetBoolean());
+        if(TryGetProperty(parameters,"restoreAfterPlay",out var restore))_data.SetCVar(CVars.RestoreAfterPlay,restore.GetBoolean());
         if (TryGetProperty(parameters, "compatMode", out var compatMode))
             _data.SetCVar(CVars.CompatMode, compatMode.GetBoolean());
         if (TryGetProperty(parameters, "verboseLogging", out var verboseLogging))
@@ -811,7 +863,7 @@ public sealed class WorkerHost
             _data.SetCVar(CVars.HasDismissedRosettaWarning, true);
 
         _data.CommitConfig();
-        SendEvent("settings.changed", new { discord = GetDiscordSettings(), favoriteAvailabilityNotifications = _data.GetCVar(CVars.FavoriteAvailabilityNotifications) });
+        SendEvent("settings.changed", new { discord = GetDiscordSettings(), window=GetWindowSettings(), favoriteAvailabilityNotifications = _data.GetCVar(CVars.FavoriteAvailabilityNotifications) });
         ConfigurePresence();
         return GetSettings();
     }
@@ -838,6 +890,8 @@ public sealed class WorkerHost
                 _ => "all"
             },
             trackedSince = summary.TrackedSince,
+            generatedAt = summary.GeneratedAt,
+            dailyActivity = summary.DailyActivity.Select(day => new { date = day.Date, totalSeconds = day.TotalSeconds }).ToArray(),
             totalSeconds = summary.TotalSeconds,
             sessionCount = summary.SessionCount,
             uniqueServers = summary.UniqueServers,
@@ -1534,10 +1588,13 @@ public sealed class WorkerHost
         => new { id = profile.Id, address = profile.Address, name = profile.Name, createdAt = profile.CreatedAtUtc, lastUsedAt = profile.LastUsedAtUtc };
 
     private static object ToNotificationDto(LauncherNotification notification)
-        => new { id = notification.Id, kind = notification.Kind, title = notification.Title, message = notification.Message, createdAt = notification.CreatedAtUtc, readAt = notification.ReadAtUtc };
+        => new { id = notification.Id, kind = notification.Kind, title = notification.Title, message = notification.Message, createdAt = notification.CreatedAtUtc, readAt = notification.ReadAtUtc, address = notification.Address, accountId = notification.AccountId };
 
     private object StartConnection(JsonElement parameters)
     {
+        EnsureCacheReadyForLaunch();
+        StopSeatWatch();
+        using var storageLease=_maintenanceGate.Use();
         var address = RequiredString(parameters, "address");
         var reason = OptionalString(parameters, "reason");
         var requestedName = OptionalString(parameters, "name");
@@ -1593,6 +1650,9 @@ public sealed class WorkerHost
 
     private object StartContentBundle(JsonElement parameters)
     {
+        EnsureCacheReadyForLaunch();
+        StopSeatWatch();
+        using var storageLease=_maintenanceGate.Use();
         var path = RequiredString(parameters, "path");
         if (!File.Exists(path) || !string.Equals(Path.GetExtension(path), ".zip", StringComparison.OrdinalIgnoreCase))
             throw new WorkerRpcException(new WorkerError("INVALID_CONTENT_BUNDLE", "The selected file is not a readable .zip"));
@@ -1835,7 +1895,7 @@ public sealed class WorkerHost
         return false;
     }
 
-    private sealed record NewsDto(string Title, string Link, DateTime? Date, string Source, string? Summary);
+
 
     private sealed record PendingRecentConnection(
         Guid AccountId,

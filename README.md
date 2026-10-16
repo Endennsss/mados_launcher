@@ -31,6 +31,7 @@ npm run dist
 - [Отчёт тестов](docs/mados-launcher-test-report.md)
 - [Руководство по стилю интерфейса](docs/INTERFACE_STYLE_GUIDE.md)
 - [Правила PR и разработки](CONTRIBUTING.md)
+- [Личные инструменты: перенос кэша, резервные копии и реплеи](docs/PERSONAL_TOOLKIT.md)
 - [Контракт IPC](Mados.Launcher/src/contracts/ipc.schema.json)
 - [Сайт лаунчера](site/index.html)
 

@@ -7,6 +7,7 @@ export function sanitizeServerAddress(address: string | null | undefined): strin
     if (parsed.protocol !== "ss14:" && parsed.protocol !== "ss14s:") return "";
     parsed.username = "";
     parsed.password = "";
+    parsed.hostname = parsed.hostname.toLowerCase();
     if ((parsed.protocol === "ss14:" && parsed.port === "1212") || (parsed.protocol === "ss14s:" && parsed.port === "443")) parsed.port = "";
     parsed.search = "";
     parsed.hash = "";

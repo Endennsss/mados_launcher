@@ -7,6 +7,14 @@ type Updater = Pick<EventEmitter, "on" | "removeListener"> & {
   downloadUpdate(): Promise<unknown>; quitAndInstall(silent?: boolean, runAfter?: boolean): void;
 };
 
+type ReleaseInfo = { version: string; releaseNotes?: string | Array<{version:string;note:string | null}> | null; releaseDate?: string };
+function releaseDetails(info: ReleaseInfo) {
+  const notes = typeof info.releaseNotes === "string" ? info.releaseNotes : info.releaseNotes?.find(item=>item.version===info.version)?.note;
+  const date = info.releaseDate ? new Date(info.releaseDate) : null;
+  return {releaseNotes:notes?.slice(0,64000),releaseDate:date && Number.isFinite(date.valueOf()) ? date.toISOString() : undefined};
+}
+const safeBytes = (value?:number) => value != null && Number.isFinite(value) && value >= 0 ? value : undefined;
+
 export class LauncherUpdates {
   private state: ShellUpdateState;
   private initialTimer?: ReturnType<typeof setTimeout>;
@@ -36,10 +44,10 @@ export class LauncherUpdates {
     this.updater.allowDowngrade = false;
     const listen = (event: string, handler: (...args: any[]) => void) => { this.handlers.push([event, handler]); this.updater.on(event, handler); };
     listen("checking-for-update", () => this.set({ status: "checking" }));
-    listen("update-not-available", () => this.set({ status: "idle", version: undefined, percent: undefined, checkedAt: new Date().toISOString() }));
-    listen("update-available", (info: { version: string }) => this.set({ status: "available", version: info.version, percent: undefined, checkedAt: new Date().toISOString() }));
-    listen("download-progress", (progress: { percent: number }) => this.set({ status: "downloading", percent: Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, progress.percent)) : 0 }));
-    listen("update-downloaded", (info: { version: string }) => this.set({ status: "downloaded", version: info.version, percent: 100 }));
+    listen("update-not-available", () => this.set({ status: "idle", version: undefined, percent: undefined, releaseNotes:undefined,releaseDate:undefined,transferred:undefined,total:undefined,bytesPerSecond:undefined, checkedAt: new Date().toISOString() }));
+    listen("update-available", (info: ReleaseInfo) => this.set({ status: "available", version: info.version, ...releaseDetails(info), percent: undefined, transferred:undefined,total:undefined,bytesPerSecond:undefined, checkedAt: new Date().toISOString() }));
+    listen("download-progress", (progress: { percent: number; transferred?:number; total?:number; bytesPerSecond?:number }) => this.set({ status: "downloading", percent: Number.isFinite(progress.percent) ? Math.max(0, Math.min(100, progress.percent)) : 0, transferred:safeBytes(progress.transferred),total:safeBytes(progress.total),bytesPerSecond:safeBytes(progress.bytesPerSecond) }));
+    listen("update-downloaded", (info: ReleaseInfo) => this.set({ status: "downloaded", version: info.version, ...(info.version !== this.state.version || info.releaseNotes != null ? releaseDetails(info) : {}), percent: 100, bytesPerSecond:undefined }));
     listen("error", this.fail);
     this.initialTimer = setTimeout(() => void this.check(), 10_000);
     this.interval = setInterval(() => void this.check(), 3_600_000);
@@ -63,7 +71,7 @@ export class LauncherUpdates {
   download(): Promise<ShellUpdateState> {
     if (this.downloading) return this.downloading;
     if (!this.options.packaged || this.stopped || this.state.status !== "available") return Promise.resolve(this.snapshot());
-    this.set({ status: "downloading", percent: 0 });
+    this.set({ status: "downloading", percent: 0, transferred:undefined,total:undefined,bytesPerSecond:undefined });
     this.downloading = this.updater.downloadUpdate().catch(this.fail).then(() => this.snapshot()).finally(() => { this.downloading = undefined; });
     return this.downloading;
   }

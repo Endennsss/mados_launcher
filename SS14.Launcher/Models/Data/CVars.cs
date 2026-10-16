@@ -15,6 +15,8 @@ namespace SS14.Launcher.Models.Data;
 [UsedImplicitly]
 public static class CVars
 {
+    public static readonly CVarDef<bool> MinimizeOnPlay = CVarDef.Create("MinimizeOnPlay",false);
+    public static readonly CVarDef<bool> RestoreAfterPlay = CVarDef.Create("RestoreAfterPlay",false);
     /// <summary>
     /// Default to using compatibility options for rendering etc,
     /// that are less likely to immediately crash on buggy drivers.

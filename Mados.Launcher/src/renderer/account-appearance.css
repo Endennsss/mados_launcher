@@ -1,0 +1,108 @@
+/* Both the live interface and its miniature use the theme tokens in styles.css. */
+@property --accent { syntax: "<color>"; inherits: true; initial-value: #ff1f2d; }
+@property --accent-hover { syntax: "<color>"; inherits: true; initial-value: #ff6672; }
+@property --accent-pressed { syntax: "<color>"; inherits: true; initial-value: #c91524; }
+@property --accent-rgb { syntax: "<number>#"; inherits: true; initial-value: 255, 31, 45; }
+@property --sidebar-start { syntax: "<color>"; inherits: true; initial-value: #1d0d14; }
+@property --sidebar-end { syntax: "<color>"; inherits: true; initial-value: #0f0a0e; }
+@property --hero-start { syntax: "<color>"; inherits: true; initial-value: #3f0a18; }
+@property --hero-mid { syntax: "<color>"; inherits: true; initial-value: #1b0e15; }
+@property --hero-end { syntax: "<color>"; inherits: true; initial-value: #160b11; }
+@property --card-start { syntax: "<color>"; inherits: true; initial-value: #241117; }
+@property --card-end { syntax: "<color>"; inherits: true; initial-value: #181015; }
+@property --popover-bg { syntax: "<color>"; inherits: true; initial-value: #1a1117; }
+@property --modal-start { syntax: "<color>"; inherits: true; initial-value: #241117; }
+@property --modal-end { syntax: "<color>"; inherits: true; initial-value: #130d12; }
+:root { transition: --accent 200ms ease, --accent-hover 200ms ease, --accent-pressed 200ms ease, --accent-rgb 200ms ease, --sidebar-start 200ms ease, --sidebar-end 200ms ease, --hero-start 200ms ease, --hero-mid 200ms ease, --hero-end 200ms ease, --card-start 200ms ease, --card-end 200ms ease, --popover-bg 200ms ease, --modal-start 200ms ease, --modal-end 200ms ease; }
+.account-initials { font-size: 12px; font-weight: 700; letter-spacing: -.3px; }
+.account-copy .account-status-muted { color: var(--text-muted); }
+.account-panel { position: fixed; z-index: 70; display: flex; flex-direction: column; padding: 20px; overflow: hidden; border: 1px solid var(--border); border-radius: 20px; background: linear-gradient(145deg, var(--modal-start), var(--modal-end)), var(--popover-bg); box-shadow: var(--shadow); animation: account-panel-in 240ms var(--ui-ease) both; transform-origin: bottom left; }
+.account-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; }
+.account-panel-heading h2 { margin: 4px 0 0; font-size: 20px; letter-spacing: -.4px; }
+.account-panel-heading .eyebrow { font-size: 9px; }
+.account-panel-identity { display: flex; align-items: center; gap: 13px; padding: 18px 0; margin-top: 4px; border-bottom: 1px solid rgba(var(--accent-rgb), .12); flex-shrink: 0; animation: account-identity-in 220ms ease both; }
+.account-identity-avatar, .account-list-avatar { display: grid; place-items: center; flex-shrink: 0; background: rgba(var(--accent-rgb), .1); color: var(--accent-hover); border: 1px solid rgba(var(--accent-rgb), .2); font-weight: 700; }
+.account-identity-avatar { width: 50px; height: 50px; font-size: 19px; border-radius: 16px; box-shadow: 0 4px 18px rgba(var(--accent-rgb), .07); }
+.account-panel-identity > div { display: grid; gap: 6px; min-width: 0; }
+.account-panel-identity strong { font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.account-panel-identity > div > span { display: flex; align-items: center; gap: 5px; color: var(--text-muted); font-size: 11px; }
+.account-panel-identity svg { color: var(--success); }
+.account-panel-label { display: flex; justify-content: space-between; gap: 12px; padding: 16px 0 10px; color: var(--text-muted); font-size: 10px; flex-shrink: 0; }
+.account-panel-label > span { font-variant-numeric: tabular-nums; }
+.account-panel-list { display: grid; gap: 6px; min-height: 40px; overflow-y: auto; padding: 2px 3px 2px 2px; margin: -2px -3px -2px -2px; }
+.account-panel-option { min-height: 62px; width: 100%; display: flex; align-items: center; gap: 11px; padding: 10px; text-align: left; background: rgba(255,255,255,.025); color: var(--text); border: 1px solid transparent; border-radius: 12px; transition: background 150ms ease, border-color 150ms ease; }
+.account-panel-option:hover:not(:disabled) { background: rgba(var(--accent-rgb), .08); border-color: rgba(var(--accent-rgb), .18); }
+.account-panel-option.selected { border-color: rgba(var(--accent-rgb), .3); background: rgba(var(--accent-rgb), .09); }
+.account-list-avatar { width: 35px; height: 35px; font-size: 12px; border-radius: 11px; }
+.account-option-copy { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.account-option-copy strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-option-copy small { color: var(--text-muted); font-size: 10px; }
+.account-panel-option.expired small { color: var(--warning); }
+.account-option-action { display: flex; align-items: center; gap: 6px; flex-shrink: 0; color: var(--accent-hover); }
+.account-option-action > span { font-size: 10px; }
+.account-panel-option.expired .account-option-action { color: var(--warning); }
+.account-panel-option:disabled { opacity: .6; cursor: wait; }
+.account-panel-option:disabled:has(.spin) { opacity: 1; }
+.account-selected-check { animation: account-confirm 300ms ease both; }
+.account-panel-feedback { flex-shrink: 0; }
+.account-panel-feedback p { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: var(--danger); overflow-wrap: anywhere; }
+.account-panel-feedback .account-success { display: flex; align-items: center; gap: 6px; color: var(--success); }
+.account-panel-footer { display: grid; gap: 7px; padding-top: 14px; margin-top: 12px; border-top: 1px solid rgba(var(--accent-rgb), .12); flex-shrink: 0; }
+.account-panel-footer button { justify-content: center; font-size: 12px; }
+.account-panel-footer .danger-text { color: var(--text-muted); }
+.account-panel-footer .danger-text:hover { color: var(--danger); }
+.account-panel-option:is(:hover,:focus-visible):not(:disabled) .lucide-arrow-right { animation: account-arrow 380ms ease both; }
+.account-panel-option:is(:hover,:focus-visible):not(:disabled) .lucide-log-in { animation: account-arrow 380ms ease both; }
+.account-panel button:is(:hover,:focus-visible):not(:disabled) > .lucide-plus { animation: account-add 400ms ease both; }
+.account-panel button:is(:hover,:focus-visible):not(:disabled) > .lucide-log-out { animation: account-arrow 400ms ease both; }
+.theme-studio { padding: 20px; border-bottom: 1px solid rgba(var(--accent-rgb), .1); }
+.theme-studio-heading h3 { margin: 0; font-size: 13px; }
+.theme-studio-heading p { margin: 7px 0 18px; color: var(--text-muted); font-size: 11px; line-height: 1.6; max-width: 480px; }
+.theme-preview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 12px; }
+.theme-preview-choice { min-width: 0; overflow: hidden; display: block; padding: 5px; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; background: rgba(255,255,255,.025); text-align: left; color: var(--text); transition: border-color 150ms, background 150ms, box-shadow 150ms; }
+.theme-preview-choice:hover { border-color: var(--border); background: rgba(var(--accent-rgb),.04); }
+.theme-preview-choice.selected { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(var(--accent-rgb),.12); }
+.theme-preview { display: block; overflow: hidden; border-radius: 10px; border: 1px solid rgba(var(--accent-rgb),.16); background: var(--bg); pointer-events: none; }
+.theme-mini-title { height: 23px; display: flex; align-items: center; gap: 5px; padding: 0 8px; font-size: 7px; color: var(--text-muted); border-bottom: 1px solid rgba(var(--accent-rgb),.12); }
+.theme-mini-brand { width: 6px; height: 6px; background: var(--accent); border-radius: 50%; }
+.theme-mini-controls { margin-left: auto; letter-spacing: 1px; }
+.theme-mini-body { display: flex; height: 105px; }
+.theme-mini-sidebar { display: flex; flex-direction: column; align-items: center; gap: 13px; width: 30px; flex-shrink: 0; padding-top: 11px; background: linear-gradient(160deg,var(--sidebar-start),var(--sidebar-end)); border-right: 1px solid rgba(var(--accent-rgb),.08); color: var(--text-muted); }
+.theme-mini-sidebar svg:first-child { color: var(--accent-hover); }
+.theme-mini-content { flex: 1; min-width: 0; padding: 11px 8px; }
+.theme-mini-line { display: block; width: 44%; height: 4px; border-radius: 2px; background: rgba(247,247,249,.65); margin-bottom: 9px; }
+.theme-mini-hero { display: flex; align-items: center; gap: 7px; height: 38px; padding: 6px; border: 1px solid rgba(var(--accent-rgb), .24); border-radius: 6px; background: linear-gradient(110deg, var(--hero-start),var(--hero-end)); }
+.theme-mini-hero > svg { flex-shrink: 0; color: var(--accent-hover); }
+.theme-mini-hero > span:not(.theme-mini-play) { flex: 1; }
+.theme-mini-hero i { display: block; height: 3px; width: 75%; border-radius: 2px; background: rgba(247,247,249,.4); margin: 4px 0; }
+.theme-mini-hero i:last-child { width: 50%; opacity: .5; }
+.theme-mini-play { display: grid; place-items: center; border-radius: 4px; background: var(--accent); width: 18px; height: 15px; color: white; }
+.theme-mini-cards { display: flex; gap: 5px; margin-top: 7px; }
+.theme-mini-cards i { flex: 1; height: 23px; border: 1px solid rgba(var(--accent-rgb), .15); border-radius: 5px; background: linear-gradient(120deg,var(--card-start),var(--card-end)); }
+.theme-choice-footer { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 11px 7px 8px; }
+.theme-choice-footer > span:first-child { display: grid; gap: 5px; min-width: 0; }
+.theme-choice-footer strong { font-size: 12px; }
+.theme-choice-footer small { font-size: 9px; color: var(--text-muted); }
+.theme-choice-check { width: 22px; height: 22px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; border: 1px solid rgba(255,255,255,.14); }
+.selected .theme-choice-check { background: rgba(var(--accent-rgb), .15); border-color: var(--border); color: var(--accent-hover); }
+.theme-choice-check svg { animation: account-confirm 300ms ease both; }
+.theme-studio-footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-top: 17px; }
+.theme-studio-footer > span { color: var(--text-muted); font-size: 10px; }
+.theme-studio-footer strong { color: var(--text); font-weight: 400; }
+.theme-studio-footer > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.theme-studio-footer button { font-size: 11px; }
+.theme-storage-error { color: var(--warning); font-size: 11px; line-height: 1.6; margin: 12px 0 0; }
+.theme-studio button:is(:hover,:focus-visible):not(:disabled) > .lucide-undo-2 { animation: account-undo 450ms ease both; }
+.theme-studio button:is(:hover,:focus-visible):not(:disabled) > .lucide-rotate-ccw { animation: account-reset 650ms ease both; }
+@keyframes account-panel-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes account-identity-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes account-confirm { 0% { opacity: 0; transform: scale(.65) rotate(-15deg); } 70% { transform: scale(1.12) rotate(0); } 100% { opacity: 1; transform: none; } }
+@keyframes account-arrow { 0%,100% { transform: none; } 50% { transform: translateX(4px); } }
+@keyframes account-add { 0% { transform: rotate(-90deg); } 100% { transform: rotate(0); } }
+@keyframes account-undo { 0%,100% { transform: none; } 50% { transform: translateX(-3px) rotate(-14deg); } }
+@keyframes account-reset { from { transform: rotate(0); } to { transform: rotate(-360deg); } }
+@media (max-height: 650px) { .account-panel { padding: 16px; } .account-panel-identity { padding: 12px 0; } .account-panel-heading h2 { font-size: 17px; } .account-panel-label { padding-top: 12px; } }
+@media (max-width: 800px) { .theme-studio { padding: 16px; } .theme-preview-grid { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; } .theme-mini-body { height: 95px; } }
+:root.reduce-motion { transition: none; }
+.reduce-motion :is(.account-panel, .account-panel-identity, .account-panel svg, .theme-choice-check svg, .theme-studio button > svg) { animation: none !important; transform: none !important; }
+@media (prefers-reduced-motion: reduce) { :root { transition: none; } :is(.account-panel, .account-panel-identity, .account-panel svg, .theme-choice-check svg, .theme-studio button > svg) { animation: none !important; transform: none !important; } }

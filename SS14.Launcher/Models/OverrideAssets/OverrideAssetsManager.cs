@@ -23,6 +23,24 @@ public sealed class OverrideAssetsManager
     private bool _overridesUpdated;
 
     private CancellationTokenSource? _updateCancel;
+    private Task? _updateTask;
+    private bool _maintenancePaused;
+
+    public async Task SuspendForMaintenanceAsync()
+    {
+        _maintenancePaused = true;
+        _updateCancel?.Cancel();
+        if (_updateTask is null) return;
+        try { await _updateTask; }
+        catch (OperationCanceledException) { /* Expected when pausing downloads. */ }
+        catch (Exception error) { Log.Warning(error, "Override asset update ended before maintenance"); }
+    }
+
+    public void ResumeAfterMaintenance()
+    {
+        _maintenancePaused = false;
+        if (_dataManager.GetCVar(CVars.OverrideAssets)) LoadAssets();
+    }
 
     public event Action<OverrideAssetsChanged>? AssetsChanged;
 
@@ -69,6 +87,7 @@ public sealed class OverrideAssetsManager
 
     public void LoadAssets()
     {
+        if (_maintenancePaused) return;
         using var con = GetSqliteConnection();
 
         var dict = new Dictionary<string, byte[]>();
@@ -93,7 +112,8 @@ public sealed class OverrideAssetsManager
         _updateCancel = new CancellationTokenSource();
         try
         {
-            await Task.Run(() => UpdateAssetsBody(_updateCancel.Token));
+            _updateTask = Task.Run(() => UpdateAssetsBody(_updateCancel.Token));
+            await _updateTask;
         }
         catch (OperationCanceledException)
         {
@@ -113,7 +133,7 @@ public sealed class OverrideAssetsManager
     [SuppressMessage("ReSharper", "UseAwaitUsing")]
     private async Task UpdateAssetsBody(CancellationToken cancel)
     {
-        await _infoManager.LoadTask.ConfigureAwait(false);
+        await _infoManager.LoadTask.WaitAsync(cancel).ConfigureAwait(false);
         if (_infoManager.Model == null)
         {
             // Error. oh well

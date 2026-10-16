@@ -53,6 +53,71 @@ public sealed class PlaytimeStoreTests
     }
 
     [Test]
+    public void DailyActivitySplitsMidnightAndKeepsAccountsSeparate()
+    {
+        using var store = new TestStore(_directory);
+        var account = Guid.NewGuid();
+        var now = DateTimeOffset.Parse("2026-10-15T12:00:00Z");
+        var session = store.Value.StartSession(account, "ss14://alpha", "Alpha", DateTimeOffset.Parse("2026-10-14T23:30:00Z"));
+        store.Value.EndSession(session, DateTimeOffset.Parse("2026-10-15T00:30:00Z"), "client_exited");
+        store.Value.StartSession(Guid.NewGuid(), "ss14://other", "Other", now.AddHours(-1));
+        var days = store.Value.GetSummary(account, PlaytimePeriod.All, now, TimeZoneInfo.Utc).DailyActivity;
+        Assert.That(days, Has.Count.EqualTo(7));
+        Assert.That(days[0].Date, Is.EqualTo("2026-10-09"));
+        Assert.That(days[0].TotalSeconds, Is.Zero);
+        Assert.That(days[5].TotalSeconds, Is.EqualTo(1800));
+        Assert.That(days[6].TotalSeconds, Is.EqualTo(1800));
+    }
+
+    [Test]
+    public void DailyActivityUsesCalendarBoundariesAcrossDaylightSaving()
+    {
+        using var store = new TestStore(_directory);
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
+        var account = Guid.NewGuid();
+        var start = DateTimeOffset.Parse("2026-10-24T22:00:00Z");
+        var end = DateTimeOffset.Parse("2026-10-25T23:00:00Z");
+        var session = store.Value.StartSession(account, "ss14://alpha", "Alpha", start);
+        store.Value.EndSession(session, end, "client_exited");
+        var days = store.Value.GetSummary(account, PlaytimePeriod.All, end.AddHours(1), zone).DailyActivity;
+        Assert.That(days[5].Date, Is.EqualTo("2026-10-25"));
+        Assert.That(days[5].TotalSeconds, Is.EqualTo(25 * 3600));
+        Assert.That(days[6].TotalSeconds, Is.Zero);
+    }
+
+    [Test]
+    public void DailyActivityIncludesOnlyElapsedActiveTimeAndReturnsZeroDaysForNewAccount()
+    {
+        using var store = new TestStore(_directory);
+        var account = Guid.NewGuid();
+        var now = DateTimeOffset.Parse("2026-10-15T12:00:00Z");
+        var empty = store.Value.GetSummary(account, PlaytimePeriod.Today, now, TimeZoneInfo.Utc);
+        Assert.That(empty.DailyActivity, Has.Count.EqualTo(7));
+        Assert.That(empty.DailyActivity[6].TotalSeconds, Is.Zero);
+        store.Value.StartSession(account, "ss14://alpha", "Alpha", now.AddMinutes(-10));
+        var summary = store.Value.GetSummary(account, PlaytimePeriod.Today, now, TimeZoneInfo.Utc);
+        Assert.That(summary.DailyActivity[6].TotalSeconds, Is.EqualTo(600));
+        Assert.That(summary.GeneratedAt, Is.EqualTo(now));
+    }
+
+    [Test]
+    public void DailyActivityStartsAtFirstOccurrenceOfAmbiguousMidnight()
+    {
+        using var store = new TestStore(_directory);
+        var account = Guid.NewGuid();
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("America/Havana");
+        var start = DateTimeOffset.Parse("2026-11-01T04:15:00Z");
+        var end = DateTimeOffset.Parse("2026-11-01T04:45:00Z");
+        var session = store.Value.StartSession(account, "ss14://alpha", "Alpha", start);
+        store.Value.EndSession(session, end, "client_exited");
+        var summary = store.Value.GetSummary(account, PlaytimePeriod.Today, end, zone);
+        Assert.That(summary.TotalSeconds, Is.EqualTo(1800));
+        Assert.That(summary.DailyActivity[6].Date, Is.EqualTo("2026-11-01"));
+        Assert.That(summary.DailyActivity[6].TotalSeconds, Is.EqualTo(1800));
+        Assert.That(summary.DailyActivity[5].TotalSeconds, Is.Zero);
+    }
+
+    [Test]
     public void GroupsSessionsByServerAndAccount()
     {
         var account = Guid.NewGuid();
@@ -81,7 +146,7 @@ public sealed class PlaytimeStoreTests
     public void ClipsSessionsToTodayAndSevenDayPeriods()
     {
         var account = Guid.NewGuid();
-        var now = DateTimeOffset.Now;
+        var now = new DateTimeOffset(DateTime.Today.AddHours(12));
         var todayStart = new DateTimeOffset(now.Date, now.Offset).ToUniversalTime();
         using var store = new TestStore(_directory);
 

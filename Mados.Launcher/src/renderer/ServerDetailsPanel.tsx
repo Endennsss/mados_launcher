@@ -4,6 +4,7 @@ import { Activity, AlertCircle, Check, ExternalLink, Gamepad2, LoaderCircle, Map
 import type { Server, ServerDetails, ServerNote } from "../contracts/launcher";
 import { mergeServerDetails, sanitizeServerAddress } from "./ui-helpers";
 
+import { SeatWatchPanel } from "./SeatWatchPanel";
 import { playServerHandoff, queueServerHandoff } from "./server-handoff";
 
 export function ServerDetailsPanel({ accountId, server, onClose, onConnect }: { accountId?: string; server: Server; onClose: () => void; onConnect: () => void }) {
@@ -36,13 +37,17 @@ export function ServerDetailsPanel({ accountId, server, onClose, onConnect }: { 
   useEffect(() => {
     alive.current = true;
     const previousFocus = document.activeElement as HTMLElement | null;
+    let handingOff = false;
+    const openSearch = () => { handingOff = true; close.current(); };
     closeRef.current?.focus({ preventScroll: true });
     const keydown = (event: KeyboardEvent) => { if (event.key === "Escape") close.current(); };
     window.addEventListener("keydown", keydown);
+    window.addEventListener("launcher-search-opened", openSearch);
     return () => {
       alive.current = false; sequence.current += 1;
       window.removeEventListener("keydown", keydown);
-      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+      window.removeEventListener("launcher-search-opened", openSearch);
+      if (!handingOff && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
     };
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -78,6 +83,7 @@ export function ServerDetailsPanel({ accountId, server, onClose, onConnect }: { 
       <section className="inspector-description"><h3>Об этой станции</h3>{loading && !details ? <p className="inspector-loading"><LoaderCircle size={15} className="spin" /> Загружаем описание…</p> : error ? <div className="inspector-error" role="alert"><AlertCircle size={16} /><p>{error}</p><button className="text-link" onClick={() => void load()}>Повторить</button></div> : <><p>{details?.description?.trim() || "Создатели сервера пока не добавили описание."}</p>{Boolean(details?.links?.length) && <div className="inspector-links">{details!.links!.map(link => <button key={link.url} onClick={() => void window.mados.openExternal(link.url).catch(caught => setError((caught as Error).message))}>{link.name || "Ссылка сервера"}<ExternalLink size={14} /></button>)}</div>}</>}</section>
       <details className="inspector-note" open={Boolean(note)}><summary><StickyNote size={16} /> Моя заметка{note && <Check size={14} />}</summary><p>Только для вашего аккаунта</p><textarea aria-label="Заметка о сервере" rows={3} maxLength={4000} value={draft} onChange={event => setDraft(event.target.value)} placeholder="Что стоит помнить об этом сервере?" />{noteError && <p className="inspector-note-error" role="alert">{noteError}</p>}<div className="inspector-note-actions"><button className="icon-button" aria-label="Удалить заметку" disabled={noteBusy || !note} onClick={() => void saveNote(true)}><Trash2 size={15} /></button><button className="secondary-button compact-button" disabled={noteBusy || !safeAddress} onClick={() => void saveNote()}>{noteBusy ? <LoaderCircle size={14} className="spin" /> : <Save size={14} />} Сохранить</button></div></details>
     </div>
+    <SeatWatchPanel key={accountId} accountId={accountId} address={safeAddress??undefined} name={server.name??undefined}/>
     <footer className="inspector-footer"><button className="primary-button" disabled={!online} onClick={event => { queueServerHandoff(safeAddress, event.currentTarget, "launch"); onConnect(); }}><Play size={16} className="play-icon" fill="currentColor" /> Подключиться</button><span>{online ? "Начните новую смену" : "Сервер сейчас недоступен"}</span></footer>
   </aside>, document.querySelector(".app-shell") ?? document.body);
 }

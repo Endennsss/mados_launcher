@@ -1,0 +1,88 @@
+.mados-search-overlay { z-index: 275; padding: 58px 24px 24px; align-items: center; background: rgba(0,0,0,.56); backdrop-filter: blur(12px); }
+.mados-search { width: min(860px, 100%); max-height: calc(100dvh - 82px); padding: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 20px; background: var(--popover-bg); box-shadow: 0 26px 90px rgba(0,0,0,.48); animation: search-open 220ms var(--ui-ease) both; }
+.search-heading { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 0 24px; }
+.search-heading > span { display: flex; align-items: center; gap: 9px; font-size: 11px; font-weight: 700; letter-spacing: .055em; color: var(--text-muted); }
+.search-heading .icon-button { width: 36px; height: 36px; border-color: transparent; background: transparent; }
+.mados-search .command-palette-search { padding: 12px 24px 18px; gap: 13px; border-bottom: 1px solid var(--border); }
+.mados-search .command-palette-search > svg { flex: 0 0 auto; color: var(--accent-hover); }
+.mados-search .command-palette-search:focus-within > svg { animation: search-focus 260ms ease both; }
+.mados-search .command-palette-search input { width: 100%; min-width: 0; font-size: 18px; font-weight: 500; background: transparent; box-shadow: none; border: 0; padding: 5px 0; outline: none; }
+.mados-search kbd { font-family: inherit; font-size: 10px; white-space: nowrap; border: 1px solid var(--ui-line); border-radius: 5px; padding: 3px 5px; color: var(--text-muted); background: rgba(var(--accent-rgb),.035); }
+.search-body { display: grid; grid-template-columns: minmax(0, 1fr) 290px; min-height: 0; height: 432px; }
+.mados-search .command-palette-list { position: relative; overflow: auto; min-height: 0; max-height: none; padding: 12px; scroll-padding: 12px; }
+.search-group-label { display: flex; gap: 9px; align-items: center; padding: 12px 12px 7px; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.search-group-label span { font-size: 9px; color: var(--accent-hover); background: rgba(var(--accent-rgb),.08); border-radius: 5px; padding: 1px 5px; }
+.mados-search .command-palette-item { position: relative; z-index: 1; display: flex; gap: 12px; width: 100%; min-height: 64px; text-align: left; border: 1px solid transparent; border-radius: 11px; padding: 10px 11px; background: transparent; transition: color 150ms ease; }
+.mados-search .command-palette-item:hover, .mados-search .command-palette-item.selected { background: transparent; border-color: transparent; }
+.search-selection { position: absolute; left: 12px; right: 12px; top: 0; z-index: 0; pointer-events: none; border: 1px solid var(--border); background: linear-gradient(105deg,rgba(var(--accent-rgb),.13),rgba(var(--accent-rgb),.045)); border-radius: 11px; transition: transform 180ms var(--ui-ease), height 180ms var(--ui-ease); }
+.search-result-icon { display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--ui-line); background: rgba(var(--accent-rgb),.04); color: var(--text-muted); transition: color 150ms ease, border-color 150ms ease; }
+.mados-search .command-palette-item > .search-result-icon { display: grid; flex: 0 0 34px; width: 34px; height: 34px; }
+.command-palette-item.selected .search-result-icon { color: var(--accent-hover); border-color: var(--border); }
+.mados-search .command-palette-item > span:nth-child(2) { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.mados-search .command-palette-item strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.mados-search .command-palette-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--text-muted); }
+.mados-search mark, .settings-search-results mark { color: var(--accent-hover); background: transparent; font-weight: 700; }
+.mados-search .command-palette-enter { flex: 0 0 auto; align-self: center; opacity: 0; color: var(--accent-hover); transition: opacity 150ms; }
+.mados-search .selected .command-palette-enter { opacity: 1; }
+.search-preview { min-width: 0; border-left: 1px solid var(--ui-line); padding: 25px 23px; display: flex; flex-direction: column; align-items: flex-start; overflow: auto; background: linear-gradient(155deg,rgba(var(--accent-rgb),.06),transparent 75%); animation: search-detail-in 180ms ease both; }
+.search-preview-symbol { width: 58px; height: 58px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 17px; background: rgba(var(--accent-rgb),.08); color: var(--accent-hover); margin-bottom: 22px; }
+.search-preview .eyebrow { margin: 0 0 8px; font-size: 9px; }
+.search-preview h2 { font-size: 20px; line-height: 1.35; letter-spacing: -.025em; margin: 0; overflow-wrap: anywhere; }
+.search-preview-description { color: var(--text-muted); font-size: 11px; line-height: 1.6; margin: 10px 0 18px; overflow-wrap: anywhere; }
+.search-preview .primary-button { margin-top: auto; width: 100%; justify-content: center; flex-shrink: 0; font-size: 11px; min-height: 39px; }
+.search-preview .primary-button:hover > .lucide-arrow-right, .settings-search-results button:hover > .lucide-arrow-right { animation: station-forward 480ms ease both; }
+.search-preview-hint { text-align: center; width: 100%; margin-top: 10px; color: var(--text-muted); font-size: 9px; line-height: 1.5; }
+.search-server-facts { display: grid; width: 100%; gap: 9px; margin: 0 0 22px; font-size: 11px; }
+.search-server-facts > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.search-server-facts dt { color: var(--text-muted); }
+.search-server-facts dd { text-align: right; margin: 0; overflow-wrap: anywhere; min-width: 0; }
+.search-preview-empty { justify-content: center; align-items: center; text-align: center; gap: 15px; color: var(--text-muted); font-size: 12px; }
+.search-source-status { flex-shrink: 0; display: flex; gap: 9px; align-items: center; padding: 10px 24px; border-bottom: 1px solid var(--ui-line); font-size: 11px; color: var(--text-muted); }
+.search-source-status > span { flex: 1; }
+.search-source-status button { display: flex; gap: 6px; align-items: center; color: var(--accent-hover); border: 0; background: none; }
+.search-footer { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 24px; border-top: 1px solid var(--ui-line); font-size: 10px; color: var(--text-muted); }
+.search-footer > span:first-child { display: flex; align-items: center; gap: 5px; }
+.mados-search .command-palette-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 260px; text-align: center; gap: 12px; padding: 24px; font-size: 12px; color: var(--text-muted); }
+.command-palette-empty strong { color: var(--text); font-size: 16px; }
+.settings-search { display: flex; align-items: center; gap: 12px; border: 1px solid var(--ui-line); border-radius: 14px; padding: 7px 13px 7px 17px; margin-bottom: 24px; background: var(--surface); transition: border-color 150ms ease, box-shadow 150ms ease; }
+.settings-search:focus-within { border-color: var(--border); box-shadow: 0 0 0 3px rgba(var(--accent-rgb),.055); }
+.settings-search > svg { color: var(--text-muted); flex: 0 0 auto; }
+.settings-search:focus-within > svg { color: var(--accent-hover); animation: search-focus 260ms ease both; }
+.settings-search input { flex: 1; min-width: 0; border: 0; outline: none; box-shadow: none; background: transparent; padding: 8px 0; font-size: 13px; }
+.settings-search input:focus { border: 0; outline: none; box-shadow: none; }
+.settings-search-hint { font-size: 10px; color: var(--text-muted); }
+.settings-search-results { border: 1px solid var(--ui-line); border-radius: 17px; background: var(--surface); overflow: hidden; }
+.settings-search-results > header { display: flex; justify-content: space-between; padding: 16px 20px; font-size: 11px; color: var(--text-muted); border-bottom: 1px solid var(--ui-line); }
+.settings-search-results > button { display: flex; width: 100%; gap: 15px; align-items: center; padding: 18px 20px; text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--ui-line); transition: background 150ms; }
+.settings-search-results > button:last-child { border-bottom: 0; }
+.settings-search-results > button:is(:hover,:focus-visible) { background: rgba(var(--accent-rgb),.06); }
+.settings-search-results > button > span:nth-child(2) { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.settings-search-results small { color: var(--accent-hover); font-size: 9px; }
+.settings-search-results strong { font-size: 13px; }
+.settings-search-results > button > span:nth-child(2) > span { color: var(--text-muted); font-size: 11px; }
+.settings-search-results > button > svg { color: var(--text-muted); }
+.settings-search-empty { display: flex; flex-direction: column; gap: 13px; align-items: center; text-align: center; padding: 50px 20px; color: var(--text-muted); font-size: 12px; }
+.settings-search-empty strong { font-size: 17px; color: var(--text); }
+.setting-anchor { scroll-margin: 20px; border-radius: 12px; outline: 0; }
+.setting-anchor.setting-found, .setting-anchor:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; background-color: rgba(var(--accent-rgb),.055); }
+.setting-found { animation: setting-found 750ms ease-out both; }
+.setting-control { display: flex; gap: 9px; align-items: center; flex-shrink: 0; }
+.setting-saved, .setting-save-error { display: flex; align-items: flex-start; gap: 5px; font-size: 10px; margin-top: 8px; line-height: 1.5; }
+.setting-saved { color: var(--success); animation: search-detail-in 180ms ease both; }
+.setting-save-error { color: var(--danger); }
+.setting-save-error > svg { flex-shrink: 0; }
+.settings-save-alert { display: flex; align-items: center; gap: 12px; border: 1px solid var(--border); background: rgba(var(--accent-rgb),.06); border-radius: 13px; padding: 14px 17px; margin-bottom: 16px; color: var(--danger); font-size: 12px; }
+.settings-save-alert > span { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.settings-save-alert strong { color: var(--text); }
+.settings-section-enter { animation: search-detail-in 200ms ease both; }
+.settings-loading { display: flex; justify-content: center; gap: 12px; padding: 50px; color: var(--text-muted); }
+@keyframes search-open { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes search-detail-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+@keyframes search-focus { 0%,100% { transform: none; } 50% { transform: scale(1.12); } }
+@keyframes setting-found { from { box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb),.5), 0 0 24px rgba(var(--accent-rgb),.08); } to { box-shadow: none; } }
+@media(max-width:800px) { .search-body { grid-template-columns: minmax(0,1fr) 240px; } .search-preview { padding: 20px 16px; } .settings-search-hint { display: none; } }
+@media(max-width:650px) { .mados-search-overlay { padding: 48px 12px 12px; } .mados-search { max-height: calc(100dvh - 60px); } .search-body { grid-template-columns: minmax(0,1fr); } .search-preview { display: none; } .search-footer > span:last-child { display: none; } .mados-search .command-palette-search input { font-size: 15px; } }
+@media(max-height:650px) { .search-body { height: 350px; } .search-preview-symbol { width: 40px; height: 40px; margin-bottom: 12px; } .search-preview-symbol svg { width: 23px; } .search-server-facts { gap: 5px; margin-bottom: 13px; } }
+.reduce-motion :is(.mados-search,.search-preview,.settings-section-enter,.setting-saved,.setting-found,.settings-search > svg,.mados-search svg,.settings-search-results svg) { animation: none !important; transform: none !important; transition: none !important; }
+.reduce-motion .search-selection { transition: none !important; }
+@media(prefers-reduced-motion:reduce) { :is(.mados-search,.search-preview,.settings-section-enter,.setting-saved,.setting-found,.settings-search > svg,.mados-search svg,.settings-search-results svg) { animation: none !important; transform: none !important; transition: none !important; } .search-selection { transition: none !important; } }

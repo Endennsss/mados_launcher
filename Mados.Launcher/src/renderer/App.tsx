@@ -6,7 +6,6 @@ import {
   ArrowRight,
   Bell,
   CheckCircle2,
-  CalendarDays,
   Check,
   ChevronDown,
   CircleHelp,
@@ -23,7 +22,6 @@ import {
   Link2,
   LoaderCircle,
   LogIn,
-  LogOut,
   Maximize2,
   Minimize2,
   Newspaper,
@@ -47,7 +45,6 @@ import {
   Square,
   Terminal,
   TerminalSquare,
-  TimerReset,
   Trash2,
   Wifi,
   WifiOff,
@@ -62,9 +59,6 @@ import type {
   DiscordPresenceStatus,
   Favorite,
   LauncherState,
-  NewsItem,
-  PlaytimePeriod,
-  PlaytimeSummary,
   RecentConnection,
   Server,
   ServerListResult,
@@ -90,14 +84,31 @@ import {
   sparklinePoints,
 } from "./monitoring";
 import type { FavoriteMonitorSummary, FavoriteMonitoringFailure, LaunchProfile, LauncherNotification } from "../contracts/launcher";
-import { CommandPalette, type CommandAction } from "./CommandPalette";
-import { LaunchProfiles } from "./LaunchProfiles";
+import { type CommandAction } from "./CommandPalette";
+import { LauncherSearch } from "./LauncherSearch";
+import { SettingsView } from "./SettingsView";
+import type { SettingSearchRequest } from "./settings-search";
+import { LaunchProfiles, type ProfileLoadState } from "./LaunchProfiles";
+import { useLaunchProfiles } from "./useLaunchProfiles";
+import { FavoriteCollection } from "./FavoriteCollection";
+import { ViewState, LoadingCards } from "./ViewState";
+import { LauncherGuide, useLauncherGuide } from "./LauncherGuide";
 import type { LaunchProfileDraft } from "./launch-profiles";
 import { ToolsView } from "./ToolsView";
 import { LastServerCard } from "./LastServerCard";
+import { PlaytimeView } from "./PlaytimeView";
+import { NotificationCenter, useNotifications } from "./NotificationCenter";
 import { ServerDetailsPanel } from "./ServerDetailsPanel";
+import { CacheTransferNotice } from "./CacheTransferCard";
+import { SeatWatchPanel } from "./SeatWatchPanel";
 import { LaunchDock } from "./LaunchDock";
+import { HomeDashboard } from "./HomeDashboard";
+import { AccountSwitcher } from "./AccountSwitcher";
+import { beginAccountTransition } from "./account-transition";
+import { useLauncherTheme } from "./ThemePicker";
+import { SessionRecap, WeeklyPlaytime } from "./HomePlaytime";
 import { LauncherUpdateView } from "./LauncherUpdateView";
+import { NewsView } from "./NewsView";
 import { reduceLaunchEvent, type LaunchActivity } from "./launch-status";
 
 import { ConfirmProvider, useConfirm } from "./ConfirmDialog";
@@ -107,23 +118,9 @@ import { TooltipLayer } from "./TooltipLayer";
 import { SelectField } from "./SelectField";
 
 type Tab = "home" | "servers" | "news" | "playtime" | "tools" | "settings";
-type CatalogTool = "monitoring" | "profiles" | "direct";
-type ThemeId = "mados" | "violet" | "ocean" | "emerald" | "amber";
+type CatalogTool = "favorites" | "monitoring" | "profiles" | "direct";
 type RequestError = Error & { code?: string; details?: { errors?: string[] } };
 type ShellUpdate = ShellUpdateState;
-
-const themeOptions: Array<{ id: ThemeId; label: string; swatch: string }> = [
-  { id: "mados", label: "Mados", swatch: "#ff1f2d" },
-  { id: "violet", label: "Фиолетовая", swatch: "#a855f7" },
-  { id: "ocean", label: "Океан", swatch: "#3b82f6" },
-  { id: "emerald", label: "Изумрудная", swatch: "#10b981" },
-  { id: "amber", label: "Янтарная", swatch: "#f59e0b" },
-];
-
-function storedTheme(): ThemeId {
-  const value = localStorage.getItem("mados.theme");
-  return themeOptions.some((option) => option.id === value) ? value as ThemeId : "mados";
-}
 
 const tabs: Array<{ id: Tab; label: string; icon: typeof Home }> = [
   { id: "home", label: "Главная", icon: Home },
@@ -138,6 +135,7 @@ export function App() { return <ConfirmProvider><LauncherApp /><TooltipLayer /><
 
 function LauncherApp() {
   const [state, setState] = useState<LauncherState | null>(null);
+  const guide = useLauncherGuide(Boolean(state?.loggedIn && state?.activeAccount?.status !== "expired"));
   const confirm = useConfirm(state?.activeAccount?.id);
   const [settings, setSettings] = useState<LauncherSettings | null>(null);
   const [tab, setTab] = useState<Tab>("home");
@@ -149,37 +147,41 @@ function LauncherApp() {
   const [online, setOnline] = useState(navigator.onLine);
   const [dragActive, setDragActive] = useState(false);
   const [accountLoginOpen, setAccountLoginOpen] = useState(false);
-  const [theme, setTheme] = useState<ThemeId>(storedTheme);
+  const [diagnosticRequest,setDiagnosticRequest]=useState<{address:string;revision:number}|null>(null);
+  const consumedDiagnostic=useRef<number|null>(null);
+  const themeController = useLauncherTheme();
+  const [accountLoginAccount, setAccountLoginAccount] = useState<Account | null>(null);
+  const loginWasOpen = useRef(false);
+  useEffect(() => {
+    if (loginWasOpen.current && !accountLoginOpen) document.querySelector<HTMLButtonElement>('[aria-label="Аккаунты"]')?.focus({ preventScroll: true });
+    loginWasOpen.current = accountLoginOpen;
+  }, [accountLoginOpen]);
   const [discordStatus, setDiscordStatus] = useState<DiscordPresenceStatus>("unavailable");
-  const [notifications, setNotifications] = useState<LauncherNotification[]>([]);
+  const notificationFeed = useNotifications(state?.activeAccount?.id);
+  const { items: notifications, toast } = notificationFeed;
+  const [notificationServer, setNotificationServer] = useState<Server | null>(null);
+  const [settingsSearchRequest, setSettingsSearchRequest] = useState<SettingSearchRequest | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [toast, setToast] = useState<LauncherNotification | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [profiles, setProfiles] = useState<LaunchProfile[]>([]);
-  const [profilesBusy, setProfilesBusy] = useState(false);
+  const profileController = useLaunchProfiles(state?.activeAccount?.id, confirm);
+  const { profiles, busy: profilesBusy, create: createProfile, update: updateProfile, remove: removeProfile, useProfile, status: profileStatus } = profileController;
 
-  const markNotificationRead = useCallback(async (notification: LauncherNotification) => {
-    if (notification.readAt) return;
-    try { await window.mados.notifications.markRead(notification.id); } catch { /* best effort */ }
-    setNotifications((items) => items.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item));
-  }, []);
 
-  const clearNotifications = useCallback(async () => {
-    try { await window.mados.notifications.clear(); } catch { /* best effort */ }
-    setNotifications([]);
+  useEffect(() => { setNotificationsOpen(false); setNotificationServer(null); setPaletteOpen(false); setDiagnosticRequest(null); }, [state?.activeAccount?.id]);
+  const openNotification = (item: LauncherNotification) => {
     setNotificationsOpen(false);
-  }, []);
+    if (item.id !== "current-update") void notificationFeed.read(item);
+    if (item.kind === "launcher-update") { setSettingsSearchRequest(value => ({id:"updates", revision:(value?.revision ?? 0)+1})); setTab("settings"); }
+    else if ((item.kind === "favorite-online" || item.kind === "server-slot") && item.address) {
+      setNotificationServer(serverFromRecentConnection({address:item.address,name:item.message,lastConnectedAt:item.createdAt,playerCount:null,pingMs:null}));
+    } else setTab("servers");
+  };
 
   useEffect(() => {
     const language = settings?.language?.toLowerCase();
     document.documentElement.lang = language?.startsWith("en") ? "en" : "ru";
     document.documentElement.classList.toggle("reduce-motion", localStorage.getItem("mados.reducedMotion") === "true");
   }, [settings]);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("mados.theme", theme);
-  }, [theme]);
 
   useEffect(() => {
     const startupApi = window.mados as typeof window.mados & { onStartupState?: (listener: (state: StartupState) => void) => () => void; getStartupState?: () => Promise<StartupState> };
@@ -189,22 +191,15 @@ function LauncherApp() {
     const unsubscribe = window.mados.onEvent((event) => handleWorkerEvent(event, setState, setSettings, setConnection, setStartupError, setShellUpdate));
     void window.mados.getUpdateState?.().then(next => setShellUpdate(current => next.revision >= current.revision ? next : current)).catch(() => undefined);
     const unsubscribeDiscord = window.mados.onDiscordStatus(({ status }) => setDiscordStatus(status));
-    const unsubscribeNotifications = window.mados.onEvent((event) => {
-      if (event.event !== "notification.created") return;
-      const item = event.data as LauncherNotification;
-      if (!item?.id) return;
-      setNotifications((items) => [item, ...items.filter((existing) => existing.id !== item.id)].slice(0, 30));
-      setToast(item);
-      window.setTimeout(() => setToast((current) => current?.id === item.id ? null : current), 5200);
-    });
     const onOnline = () => setOnline(true);
     const onOffline = () => setOnline(false);
     const onLauncherError = (event: Event) => setStartupError((event as CustomEvent<{ message: string }>).detail.message);
-    const onDragOver = (event: DragEvent) => { event.preventDefault(); setDragActive(true); };
+    const onDragOver = (event: DragEvent) => { if (!Array.from(event.dataTransfer?.types ?? []).includes("Files")) return; event.preventDefault(); setDragActive(!(event.target instanceof Element && event.target.closest(".replay-library"))); };
     const onDragLeave = (event: DragEvent) => { if (event.target === event.currentTarget) setDragActive(false); };
     const onDrop = (event: DragEvent) => {
       event.preventDefault();
       setDragActive(false);
+      if(event.target instanceof Element && event.target.closest(".replay-library"))return;
       const file = event.dataTransfer?.files[0];
       if (!file) return;
       const path = window.mados.getPathForFile(file);
@@ -233,7 +228,6 @@ function LauncherApp() {
       unsubscribe();
       unsubscribeStartup();
       unsubscribeDiscord();
-      unsubscribeNotifications();
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("launcher-error", onLauncherError);
@@ -243,99 +237,19 @@ function LauncherApp() {
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    if (!state?.activeAccount?.id) {
-      setNotifications([]);
-      return () => { cancelled = true; };
-    }
-    void window.mados.notifications.list().then((items) => {
-      if (!cancelled) setNotifications(Array.isArray(items) ? items : []);
-    }).catch(() => {
-      if (!cancelled) setNotifications([]);
-    });
-    return () => { cancelled = true; };
-  }, [state?.activeAccount?.id]);
-
-  const reloadProfiles = useCallback(async () => {
-    if (!state?.activeAccount?.id) {
-      setProfiles([]);
-      return;
-    }
-    try {
-      const items = await window.mados.launchProfiles.list();
-      setProfiles(Array.isArray(items) ? items : []);
-    } catch {
-      setProfiles([]);
-    }
-  }, [state?.activeAccount?.id]);
-
-  useEffect(() => {
-    void reloadProfiles();
-    const unsubscribe = window.mados.onEvent((event) => {
-      if (event.event === "launchProfiles.updated") void reloadProfiles();
-    });
-    return unsubscribe;
-  }, [reloadProfiles]);
-
-  const createProfile = useCallback(async (draft: LaunchProfileDraft) => {
-    setProfilesBusy(true);
-    try {
-      const created = await window.mados.launchProfiles.create(draft.name, draft.address);
-      setProfiles((items) => [created, ...items.filter((item) => item.id !== created.id && item.address !== created.address)]);
-    } catch (caught) {
-      setStartupError((caught as Error).message);
-    } finally {
-      setProfilesBusy(false);
-    }
-  }, []);
-
-  const updateProfile = useCallback(async (id: string, draft: LaunchProfileDraft) => {
-    setProfilesBusy(true);
-    try {
-      const updated = await window.mados.launchProfiles.update(id, draft.name, draft.address);
-      setProfiles((items) => [updated, ...items.filter((item) => item.id !== id && item.address !== updated.address)]);
-    } catch (caught) {
-      setStartupError((caught as Error).message);
-    } finally {
-      setProfilesBusy(false);
-    }
-  }, []);
-
-  const removeProfile = useCallback(async (profile: LaunchProfile) => {
-    if (!await confirm({ title: "Удалить профиль?", message: `Профиль «${profile.name}» исчезнет из быстрых действий. Игровые файлы сохранятся.`, confirmLabel: "Удалить", destructive: true })) return;
-    setProfilesBusy(true);
-    try {
-      await window.mados.launchProfiles.remove(profile.id);
-      setProfiles((items) => items.filter((item) => item.id !== profile.id));
-    } catch (caught) {
-      setStartupError((caught as Error).message);
-    } finally {
-      setProfilesBusy(false);
-    }
-  }, []);
-
-  const useProfile = useCallback(async (profile: LaunchProfile) => {
-    setProfilesBusy(true);
-    try {
-      const selected = await window.mados.launchProfiles.use(profile.id);
-      setProfiles((items) => items.map((item) => item.id === selected.id ? selected : item));
-      await window.mados.invoke("servers.connect", { address: selected.address, name: selected.name });
-    } catch (caught) {
-      setStartupError((caught as Error).message);
-    } finally {
-      setProfilesBusy(false);
-    }
-  }, []);
-
   const executePaletteAction = useCallback(async (action: CommandAction) => {
+    if (action.type === "open-setting") {
+      setSettingsSearchRequest(value => ({id:action.settingId, revision:(value?.revision ?? 0)+1}));
+      setTab("settings");return;
+    }
+    if (action.type === "open-server") { setNotificationServer(action.server);return; }
     if (action.type === "navigate") {
       setTab(action.tab);
       return;
     }
     if (action.type === "refresh-servers") {
       setTab("servers");
-      window.dispatchEvent(new CustomEvent("servers-refresh-requested"));
+      try { await window.mados.invoke("servers.refresh"); } catch(caught) { setStartupError((caught as Error).message); }
       return;
     }
     if (action.type === "open-monitoring") {
@@ -344,8 +258,9 @@ function LauncherApp() {
       return;
     }
     if (action.type === "connect-profile") {
-      const profile = profiles.find((item) => item.id === action.profileId);
-      if (profile) await useProfile(profile);
+      try {
+        await profileController.launch(action.profileId);
+      } catch(caught) { setStartupError((caught as Error).message); }
       return;
     }
     if (action.type === "connect-last") {
@@ -360,11 +275,17 @@ function LauncherApp() {
     }
   }, [profiles, state?.activeAccount?.id, useProfile]);
 
+  const openSearch = useCallback(() => {
+    if (document.querySelector('[role="alertdialog"], .login-overlay, .launcher-guide')) return;
+    window.dispatchEvent(new Event("launcher-search-opened"));
+    setNotificationsOpen(false);setNotificationServer(null);setPaletteOpen(true);
+  }, []);
+
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setPaletteOpen((open) => !open);
+        if (paletteOpen) setPaletteOpen(false); else openSearch();
       }
       if (event.key === "Escape") {
         setPaletteOpen(false);
@@ -373,7 +294,7 @@ function LauncherApp() {
     };
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
-  }, []);
+  }, [paletteOpen, openSearch]);
 
   if (startupError && !state) {
     return <FatalError message={startupError} onRetry={() => window.location.reload()} />;
@@ -384,42 +305,48 @@ function LauncherApp() {
   }
 
   if (!state.loggedIn || state.activeAccount?.status === "expired") {
-    return <><LoginScreen onLoggedIn={setState} expired={state.activeAccount?.status === "expired"} /><div className="login-update-notice"><LauncherUpdateView update={shellUpdate} /></div></>;
+    return <><LoginScreen initialUsername={state.activeAccount?.username ?? undefined} onLoggedIn={setState} expired={state.activeAccount?.status === "expired"} /><div className="login-update-notice"><LauncherUpdateView update={shellUpdate} /></div></>;
   }
 
   return (
     <div className="app-shell">
-      <TitleBar unreadNotifications={notificationUnreadCount(notifications)} onToggleNotifications={() => setNotificationsOpen((open) => !open)} onOpenPalette={() => setPaletteOpen(true)} />
+      {guide.open && <LauncherGuide onClose={guide.close}/>}
+      <TitleBar notificationPulse={toast?.id} unreadNotifications={notificationUnreadCount(notifications)} onToggleNotifications={() => setNotificationsOpen((open) => !open)} onOpenPalette={openSearch} />
       <div className="app-layout">
-        <Sidebar state={state} tab={tab} setTab={setTab} onStateChange={setState} onAddAccount={() => setAccountLoginOpen(true)} />
+        <Sidebar state={state} tab={tab} setTab={setTab} onStateChange={setState} onAddAccount={() => { setAccountLoginAccount(null); setAccountLoginOpen(true); }} onReauthenticate={account => { setAccountLoginAccount(account); setAccountLoginOpen(true); }} />
         <main className="main-content">
           <div className="content-scroll">
             <div className="global-status-stack">
-              {!online && <div className="offline-banner"><AlertTriangle size={16} /> Нет соединения с интернетом. Кэшированные данные остаются доступны.</div>}
+              {!online && <ViewState compact kind="offline" icon={<WifiOff size={20}/>} title="Сейчас вы офлайн" description="Сохранённые серверы и локальные данные доступны. Сетевые действия заработают после восстановления связи."/>}
               {state.compatibility && <CompatibilityBanner state={state} onStateChange={setState} />}
+              {guide.error && <InlineError message={guide.error} onClose={guide.clearError}/>}
               {startupError && <InlineError message={startupError} onClose={() => setStartupError(null)} />}
-              <LauncherUpdateView update={shellUpdate} launchBusy={Boolean(connection && !["ClientExited", "Cancelled", "ConnectionFailed", "UpdateError", "NotAContentBundle", "Error"].includes(connection.status))} />
+              <LauncherUpdateView update={shellUpdate} onOpenDetails={() => { setSettingsSearchRequest(value => ({id:"updates",revision:(value?.revision ?? 0)+1})); setTab("settings"); }} launchBusy={Boolean(connection && !["ClientExited", "Cancelled", "ConnectionFailed", "UpdateError", "NotAContentBundle", "Error"].includes(connection.status))} />
             </div>
-            {tab === "home" && <HomeView playing={connection?.status === "ClientRunning"} launchBusy={Boolean(connection && !["Cancelled", "ConnectionFailed", "UpdateError", "NotAContentBundle", "Error"].includes(connection.status))} state={state} onNavigate={setTab} onStateChange={setState} profiles={profiles} profilesBusy={profilesBusy} onUseProfile={useProfile} onCreateProfile={createProfile} onUpdateProfile={updateProfile} onRemoveProfile={removeProfile} />}
-            {tab === "servers" && <ServersView state={state} tool={catalogTool} onToolChange={setCatalogTool} onStateChange={setState} profiles={profiles} profilesBusy={profilesBusy} onUseProfile={useProfile} onCreateProfile={createProfile} onUpdateProfile={updateProfile} onRemoveProfile={removeProfile} />}
-            {tab === "news" && <NewsView />}
-            {tab === "playtime" && <PlaytimeView state={state} onNavigate={setTab} />}
-            {tab === "tools" && <ToolsView onError={setStartupError} launchProfiles={profiles} launchProfilesBusy={profilesBusy} onUseLaunchProfile={useProfile} onCreateLaunchProfile={createProfile} onUpdateLaunchProfile={updateProfile} onRemoveLaunchProfile={removeProfile} />}
-            {tab === "settings" && <SettingsView settings={settings} setSettings={setSettings} theme={theme} setTheme={setTheme} discordStatus={discordStatus} shellUpdate={shellUpdate} launchBusy={Boolean(connection && !["ClientExited", "Cancelled", "ConnectionFailed", "UpdateError", "NotAContentBundle", "Error"].includes(connection.status))} />}
+            {tab === "home" && <HomeView onOpenGuide={() => guide.setOpen(true)} playing={connection?.status === "ClientRunning"} launchBusy={Boolean(connection && !["Cancelled", "ConnectionFailed", "UpdateError", "NotAContentBundle", "Error"].includes(connection.status))} state={state} onNavigate={setTab} onManageFavorites={() => {setTab("servers");setCatalogTool("favorites");}} onStateChange={next=>setState(current=>current?.activeAccount?.id===next.activeAccount?.id?next:current)} profiles={profiles} profilesBusy={profilesBusy} profileStatus={profileStatus} onUseProfile={useProfile} onCreateProfile={createProfile} onUpdateProfile={updateProfile} onRemoveProfile={removeProfile} />}
+            {tab === "servers" && <ServersView state={state} key={state.activeAccount?.id} tool={catalogTool} onToolChange={setCatalogTool} onStateChange={next=>setState(current=>current?.activeAccount?.id===next.activeAccount?.id?next:current)} profiles={profiles} profilesBusy={profilesBusy} profileStatus={profileStatus} onUseProfile={useProfile} onCreateProfile={createProfile} onUpdateProfile={updateProfile} onRemoveProfile={removeProfile} />}
+            {tab === "news" && <NewsView accountId={state.activeAccount!.id} update={shellUpdate} onOpenUpdate={() => { setSettingsSearchRequest(value => ({id:"updates",revision:(value?.revision ?? 0)+1})); setTab("settings"); }} />}
+            {tab === "playtime" && <PlaytimeView key={state.activeAccount?.id} accountId={state.activeAccount!.id} username={state.activeAccount!.username} onBrowse={() => setTab("servers")} />}
+            {tab === "tools" && <ToolsView key={state.activeAccount?.id} accountId={state.activeAccount?.id} diagnosticRequest={diagnosticRequest} autoDiagnose={!!diagnosticRequest&&consumedDiagnostic.current!==diagnosticRequest.revision} onDiagnosticStarted={()=>{consumedDiagnostic.current=diagnosticRequest?.revision??null;}} onDiagnosticLogin={()=>{setAccountLoginAccount(state.activeAccount);setAccountLoginOpen(true);}} onError={setStartupError} launchProfiles={profiles} launchProfilesBusy={profilesBusy} profileStatus={profileStatus} onUseLaunchProfile={useProfile} onCreateLaunchProfile={createProfile} onUpdateLaunchProfile={updateProfile} onRemoveLaunchProfile={removeProfile} />}
+            {tab === "settings" && <SettingsView request={settingsSearchRequest} settings={settings} setSettings={setSettings} themeController={themeController} discordStatus={discordStatus} shellUpdate={shellUpdate} launchBusy={Boolean(connection && !["ClientExited", "Cancelled", "ConnectionFailed", "UpdateError", "NotAContentBundle", "Error"].includes(connection.status))} />}
           </div>
-          {connection && <LaunchDock activity={connection} onDismiss={() => setConnection(null)} />}
+          <CacheTransferNotice/>
+          <SeatWatchPanel key={`seat-${state.activeAccount?.id}`} compact accountId={state.activeAccount?.id}/>
+          {connection && <LaunchDock activity={connection} onDismiss={() => setConnection(null)} onDiagnose={connection.address?()=>{setDiagnosticRequest({address:connection.address!,revision:Date.now()});setTab("tools");}:undefined} onOpenServer={connection.address&&!connection.contentBundle?()=>setNotificationServer(serverFromRecentConnection({address:connection.address!,name:connection.name,lastConnectedAt:new Date().toISOString(),playerCount:null,pingMs:null})):undefined} />}
+          {state.activeAccount && <SessionRecap key={state.activeAccount.id} accountId={state.activeAccount.id} launchBusy={Boolean(connection)} onOpenPlaytime={() => setTab("playtime")} />}
         </main>
       </div>
       {dragActive && <div className="drop-overlay"><div className="drop-card"><Download size={28} /><strong>Отпустите .zip здесь</strong><span>Контент-бандл или реплей откроется через C# worker</span></div></div>}
-      {accountLoginOpen && <LoginScreen mode="add" onLoggedIn={(next) => { setState(next); setAccountLoginOpen(false); }} onCancel={() => setAccountLoginOpen(false)} />}
-      {notificationsOpen && <NotificationJournal notifications={notifications} onRead={(item) => void markNotificationRead(item)} onClear={() => void clearNotifications()} onClose={() => setNotificationsOpen(false)} />}
-      {toast && <NotificationToast notification={toast} onClose={() => setToast(null)} onOpen={() => { setNotificationsOpen(true); void markNotificationRead(toast); setToast(null); }} />}
-      {paletteOpen && <CommandPalette open={paletteOpen} state={state} profiles={profiles} hasLastServer={Boolean(localStorage.getItem(lastServerStorageKey(state.activeAccount?.id)))} onClose={() => setPaletteOpen(false)} onExecute={(action) => { void executePaletteAction(action); setPaletteOpen(false); }} />}
+      {accountLoginOpen && <LoginScreen mode="add" initialUsername={accountLoginAccount?.username ?? undefined} expired={Boolean(accountLoginAccount)} onLoggedIn={(next) => { setState(next); setAccountLoginOpen(false); }} onCancel={() => setAccountLoginOpen(false)} />}
+      {notificationsOpen && <NotificationCenter key={state.activeAccount?.id} {...notificationFeed} accountId={state.activeAccount!.id} onClose={() => setNotificationsOpen(false)} onAction={openNotification} update={shellUpdate} />}
+      {toast && <NotificationToast key={toast.id} notification={toast} onClose={notificationFeed.dismissToast} onOpen={() => { setNotificationsOpen(true); notificationFeed.dismissToast(); }} />}
+      {notificationServer && <ServerDetailsPanel key={`${state.activeAccount?.id}:${notificationServer.address}`} accountId={state.activeAccount?.id} server={notificationServer} onClose={() => setNotificationServer(null)} onConnect={() => { const server=notificationServer;setNotificationServer(null);void window.mados.invoke("servers.connect", {address:server.address,name:server.name}).catch((error:Error)=>setStartupError(error.message)); }} />}
+      {paletteOpen && <LauncherSearch key={state.activeAccount?.id} state={state} hasLastServer={Boolean(localStorage.getItem(lastServerStorageKey(state.activeAccount?.id)))} onClose={() => setPaletteOpen(false)} onExecute={action => { void executePaletteAction(action); }} />}
     </div>
   );
 }
 
-function TitleBar({ unreadNotifications, onToggleNotifications, onOpenPalette }: { unreadNotifications: number; onToggleNotifications: () => void; onOpenPalette: () => void }) {
+function TitleBar({ notificationPulse, unreadNotifications, onToggleNotifications, onOpenPalette }: { notificationPulse?: string; unreadNotifications: number; onToggleNotifications: () => void; onOpenPalette: () => void }) {
   const [maximized, setMaximized] = useState(false);
   useEffect(() => {
     const listener = (event: Event) => setMaximized((event as CustomEvent<{ maximized: boolean }>).detail.maximized);
@@ -431,7 +358,7 @@ function TitleBar({ unreadNotifications, onToggleNotifications, onOpenPalette }:
       <div className="title-brand"><CatMark small /><span>Mados Launcher</span></div>
       <div className="window-controls">
         <button className="title-action" aria-label="Командная палитра" data-tooltip="Команды (Ctrl+K)" onClick={onOpenPalette}><Command size={15} /></button>
-        <button className="title-action notification-trigger" aria-label="Уведомления" data-tooltip="Уведомления" onClick={onToggleNotifications}><Bell size={15} />{unreadNotifications > 0 && <span className="notification-badge">{unreadNotifications > 9 ? "9+" : unreadNotifications}</span>}</button>
+        <button className="title-action notification-trigger" aria-label="Уведомления" data-tooltip="Уведомления" onClick={onToggleNotifications}><Bell key={notificationPulse ?? "quiet"} size={15} className={notificationPulse ? "notification-arrived" : ""} />{unreadNotifications > 0 && <span className="notification-badge">{unreadNotifications > 9 ? "9+" : unreadNotifications}</span>}</button>
         <button aria-label="Свернуть" onClick={() => window.mados.minimize()}><Minimize2 size={15} /></button>
         <button aria-label={maximized ? "Восстановить" : "Развернуть"} onClick={() => window.mados.toggleMaximize()}>{maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
         <button aria-label="Закрыть" className="close-control" onClick={() => window.mados.close()}><X size={16} /></button>
@@ -440,8 +367,7 @@ function TitleBar({ unreadNotifications, onToggleNotifications, onOpenPalette }:
   );
 }
 
-function Sidebar({ state, tab, setTab, onStateChange, onAddAccount }: { state: LauncherState; tab: Tab; setTab: (tab: Tab) => void; onStateChange: (state: LauncherState) => void; onAddAccount: () => void }) {
-  const [accountOpen, setAccountOpen] = useState(false);
+function Sidebar({ state, tab, setTab, onStateChange, onAddAccount, onReauthenticate }: { state: LauncherState; tab: Tab; setTab: (tab: Tab) => void; onStateChange: (state: LauncherState) => void; onAddAccount: () => void; onReauthenticate: (account: Account) => void }) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("mados.sidebarCollapsed") === "true");
   const toggleCollapsed = () => setCollapsed((value) => {
     const next = !value;
@@ -463,61 +389,21 @@ function Sidebar({ state, tab, setTab, onStateChange, onAddAccount }: { state: L
         ))}
       </nav>
       <div className="sidebar-bottom">
-        <div className="account-wrap">
-          <button className="account-button" onClick={() => setAccountOpen((open) => !open)}>
-            <span className="account-avatar"><UserRound size={16} /></span>
-            <span className="account-copy"><strong>{state.activeAccount?.username ?? "Аккаунт"}</strong><small>В сети</small></span>
-            <ChevronDown size={15} className={accountOpen ? "rotated" : ""} />
-          </button>
-          {accountOpen && <AccountMenu state={state} onStateChange={onStateChange} onAddAccount={() => { setAccountOpen(false); onAddAccount(); }} />}
-        </div>
+        <AccountSwitcher state={state} onStateChange={onStateChange} onAddAccount={onAddAccount} onReauthenticate={onReauthenticate} />
         <div className="sidebar-version">Mados Launcher · {state.version}</div>
       </div>
     </aside>
   );
 }
 
-function AccountMenu({ state, onStateChange, onAddAccount }: { state: LauncherState; onStateChange: (state: LauncherState) => void; onAddAccount: () => void }) {
-  const [switching, setSwitching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const switchAccount = async (account: Account) => {
-    setSwitching(true);
-    setError(null);
-    try {
-      await window.mados.invoke<Account>("auth.switchAccount", { accountId: account.id });
-      onStateChange(await window.mados.invoke<LauncherState>("app.getState"));
-    } catch (caught) {
-      setError((caught as Error).message);
-    } finally { setSwitching(false); }
-  };
-  const logout = async () => {
-    setError(null);
-    try {
-      await window.mados.invoke("auth.logout", { accountId: state.activeAccount?.id });
-      onStateChange(await window.mados.invoke<LauncherState>("app.getState"));
-    } catch (caught) {
-      setError((caught as Error).message);
-    }
-  };
-  return (
-    <div className="account-menu popover">
-      <div className="popover-label">Аккаунты</div>
-      {error && <div className="popover-error">{error}</div>}
-      {state.accounts.map((account) => <button key={account.id} className="account-option" disabled={switching} onClick={() => void switchAccount(account)}><span className={`status-dot ${account.status === "expired" ? "expired" : ""}`} />{account.username ?? "Аккаунт"}<Check size={14} className={account.active ? "visible" : "hidden"} /></button>)}
-      <button className="account-option account-add" onClick={() => { onAddAccount(); }}><Plus size={15} />Добавить аккаунт</button>
-      <div className="popover-divider" />
-      <button className="account-option danger-text" onClick={() => void logout()}><LogOut size={15} />Выйти</button>
-    </div>
-  );
-}
-
-function HomeView({ playing, launchBusy, state, onNavigate, onStateChange, profiles, profilesBusy, onUseProfile, onCreateProfile, onUpdateProfile, onRemoveProfile }: { playing: boolean; launchBusy: boolean; state: LauncherState; onNavigate: (tab: Tab) => void; onStateChange: (state: LauncherState) => void; profiles: LaunchProfile[]; profilesBusy: boolean; onUseProfile: (profile: LaunchProfile) => void | Promise<void>; onCreateProfile: (draft: LaunchProfileDraft) => void | Promise<void>; onUpdateProfile: (id: string, draft: LaunchProfileDraft) => void | Promise<void>; onRemoveProfile: (profile: LaunchProfile) => void | Promise<void> }) {
+function HomeView({ onOpenGuide, playing, launchBusy, state, onNavigate, onManageFavorites, onStateChange, profiles, profilesBusy, profileStatus, onUseProfile, onCreateProfile, onUpdateProfile, onRemoveProfile }: { onOpenGuide: () => void; playing: boolean; launchBusy: boolean; state: LauncherState; onNavigate: (tab: Tab) => void; onManageFavorites: () => void; onStateChange: (state: LauncherState) => void; profiles: LaunchProfile[]; profilesBusy: boolean; profileStatus: ProfileLoadState; onUseProfile: (profile: LaunchProfile) => void | Promise<void>; onCreateProfile: (draft: LaunchProfileDraft) => void | Promise<void>; onUpdateProfile: (id: string, draft: LaunchProfileDraft) => void | Promise<void>; onRemoveProfile: (profile: LaunchProfile) => void | Promise<void> }) {
   const [lastServer, setLastServer] = useState<Server | null>(null);
   const [selectedHomeServer, setSelectedHomeServer] = useState<Server | null>(null);
   const [busy, setBusy] = useState(false);
   const [recentConnections, setRecentConnections] = useState<RecentConnection[]>([]);
   const [recentLoading, setRecentLoading] = useState(true);
   const [recentError, setRecentError] = useState<string | null>(null);
+  const [recentRetry, setRecentRetry] = useState(0);
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
   useEffect(() => {
     const storageKey = lastServerStorageKey(state.activeAccount?.id);
@@ -554,7 +440,7 @@ function HomeView({ playing, launchBusy, state, onNavigate, onStateChange, profi
       });
     });
     return () => { cancelled = true; unsubscribe(); };
-  }, [state.activeAccount?.id]);
+  }, [state.activeAccount?.id, recentRetry]);
   const connect = async (server: Server) => {
     setBusy(true);
     const safeAddress = sanitizeServerAddress(server.address);
@@ -575,18 +461,21 @@ function HomeView({ playing, launchBusy, state, onNavigate, onStateChange, profi
   return (
     <>
     <section className="page page-enter">
-      <div className="page-heading"><div><p className="eyebrow">Добро пожаловать обратно</p><h1>{state.activeAccount?.username ?? "Mados"}</h1><p className="page-subtitle">Готовы вернуться на станцию?</p></div><div className="heading-actions"><button className="icon-button" aria-label="Справка" data-tooltip="Справка по лаунчеру" onClick={() => void window.mados.openExternal("https://github.com/Endennsss/mados_launcher#readme")}><CircleHelp size={18} /></button></div></div>
-      <LastServerCard key={`${state.activeAccount?.id}:${recentConnections[0]?.address ?? lastServer?.address ?? "empty"}`} accountId={state.activeAccount?.id}
-        server={recentConnections[0] ? serverFromRecentConnection(recentConnections[0]) : lastServer} recent={recentConnections[0]}
-        loading={recentLoading} playing={playing} busy={busy || launchBusy} onConnect={server => void connect(server)} onBrowse={() => onNavigate("servers")} onDetails={setSelectedHomeServer} />
-      <div className="section-heading"><div><h2>Недавние подключения</h2><span>{recentConnections.length} серверов</span></div><button className="ghost-button" onClick={() => onNavigate("servers")}>Каталог <ArrowRight className="action-arrow" size={15} /></button></div>
-      {recentError && <InlineError message={recentError} onClose={() => setRecentError(null)} />}
-      {recentLoading ? <div className="recent-connection-grid">{Array.from({ length: 3 }, (_, index) => <div className="recent-connection-skeleton" key={index} />)}</div> : recentConnections.length > 0 ? <div className="recent-connection-grid">{sortRecentConnections(recentConnections, "recent").map((recent) => <RecentConnectionCard key={recent.address} connection={recent} onConnect={() => void connect(serverFromRecentConnection(recent))} onDetails={() => setSelectedHomeServer(serverFromRecentConnection(recent))} />)}</div> : <EmptyState icon={<Clock3 size={23} />} title="Недавних подключений пока нет" description="Подключитесь к серверу, и он появится здесь после успешного запуска игры." action="Открыть каталог" onAction={() => onNavigate("servers")} />}
-      <div className="section-heading"><div><h2>Избранные серверы</h2><span>{state.favorites.length} сохранено</span></div><button className="ghost-button" onClick={() => onNavigate("servers")}>Все серверы <ArrowRight className="action-arrow" size={15} /></button></div>
+      <div className="page-heading"><div><p className="eyebrow">Добро пожаловать обратно</p><h1>{state.activeAccount?.username ?? "Mados"}</h1><p className="page-subtitle">Готовы вернуться на станцию?</p></div><div className="heading-actions"><button className="icon-button" aria-label="Справка" data-tooltip="Краткий гайд по лаунчеру" onClick={onOpenGuide}><CircleHelp size={18} /></button></div></div>
       {favoriteError && <InlineError message={favoriteError} onClose={() => setFavoriteError(null)} />}
-      {state.favorites.length > 0 ? <div className="favorite-grid">{state.favorites.slice(0, 4).map((favorite) => <FavoriteCard key={favorite.address} favorite={favorite} onConnect={() => void connect(serverFromFavorite(favorite))} onRemove={() => void removeFavorite(favorite)} onDetails={() => setSelectedHomeServer(serverFromFavorite(favorite))} />)}</div> : <EmptyState icon={<Star size={23} />} title="Избранных серверов пока нет" description="Сохраните серверы, к которым возвращаетесь чаще всего." action="Открыть каталог" onAction={() => onNavigate("servers")} />}
-      <div className="quick-actions"><button className="quick-action" onClick={() => onNavigate("servers")}><Globe2 size={18} /><span><strong>Каталог серверов</strong><small>Найти новую станцию</small></span><ArrowRight className="action-arrow" size={16} /></button><button className="quick-action" onClick={() => void openContentBundle().catch((caught: Error) => setFavoriteError(caught.message))}><Download size={18} /><span><strong>Открыть контент-бандл</strong><small>Запустить .zip или реплей</small></span><ArrowRight className="action-arrow" size={16} /></button></div>
-      <LaunchProfiles profiles={profiles} busy={profilesBusy} onUse={onUseProfile} onCreate={onCreateProfile} onUpdate={onUpdateProfile} onRemove={onRemoveProfile} />
+      <HomeDashboard key={state.activeAccount?.id ?? "anonymous"} accountId={state.activeAccount?.id ?? "anonymous"} favorites={state.favorites} renderBlocks={homeFavorites => ({
+        lastServer: (<LastServerCard key={`${state.activeAccount?.id}:${recentConnections[0]?.address ?? lastServer?.address ?? "empty"}`} accountId={state.activeAccount?.id}
+        server={recentConnections[0] ? serverFromRecentConnection(recentConnections[0]) : lastServer} recent={recentConnections[0]}
+        loading={recentLoading} playing={playing} busy={busy || launchBusy} onConnect={server => void connect(server)} onBrowse={() => onNavigate("servers")} onDetails={setSelectedHomeServer} />),
+        recent: (<><div className="section-heading"><div><h2>Недавние подключения</h2><span>{recentConnections.length} серверов</span></div><button className="ghost-button" onClick={() => onNavigate("servers")}>Каталог <ArrowRight className="action-arrow" size={15} /></button></div>
+      {recentError && <ViewState compact kind="error" title="История подключений недоступна" description={recentError} action="Повторить" onAction={()=>setRecentRetry(value=>value+1)}/>}
+      {recentLoading ? <LoadingCards count={3} className="recent-connection-grid" itemClassName="recent-connection-skeleton" label="Загружаем недавние подключения…"/> : recentConnections.length > 0 ? <div className="recent-connection-grid">{sortRecentConnections(recentConnections, "recent").map((recent) => <RecentConnectionCard key={recent.address} connection={recent} onConnect={() => void connect(serverFromRecentConnection(recent))} onDetails={() => setSelectedHomeServer(serverFromRecentConnection(recent))} />)}</div> : recentError ? null : <EmptyState icon={<Clock3 size={23} />} title="Недавних подключений пока нет" description="Подключитесь к серверу, и он появится здесь после успешного запуска игры." action="Открыть каталог" onAction={() => onNavigate("servers")} />}</>),
+        favorites: (<><div className="section-heading"><div><h2>Избранные серверы</h2><span>{state.favorites.length} сохранено</span></div><button className="ghost-button" onClick={onManageFavorites}>Моя коллекция <ArrowRight className="action-arrow" size={15} /></button></div>
+      {state.favorites.length > 0 ? <div className="favorite-grid">{homeFavorites.slice(0, 4).map((favorite) => <FavoriteCard key={favorite.address} favorite={favorite} onConnect={() => void connect(serverFromFavorite(favorite))} onRemove={() => void removeFavorite(favorite)} onDetails={() => setSelectedHomeServer(serverFromFavorite(favorite))} />)}</div> : <EmptyState icon={<Star size={23} />} title="Избранных серверов пока нет" description="Сохраните серверы, к которым возвращаетесь чаще всего." action="Открыть каталог" onAction={() => onNavigate("servers")} />}</>),
+        quickActions: (<div className="quick-actions"><button className="quick-action" onClick={() => onNavigate("servers")}><Globe2 size={18} /><span><strong>Каталог серверов</strong><small>Найти новую станцию</small></span><ArrowRight className="action-arrow" size={16} /></button><button className="quick-action" onClick={() => void openContentBundle().catch((caught: Error) => setFavoriteError(caught.message))}><Download size={18} /><span><strong>Открыть контент-бандл</strong><small>Запустить .zip или реплей</small></span><ArrowRight className="action-arrow" size={16} /></button></div>),
+        profiles: (<LaunchProfiles {...profileStatus} profiles={profiles} busy={profilesBusy} onUse={onUseProfile} onCreate={onCreateProfile} onUpdate={onUpdateProfile} onRemove={onRemoveProfile} />),
+        week: (<WeeklyPlaytime accountId={state.activeAccount?.id ?? "anonymous"} onOpen={() => onNavigate("playtime")} />),
+      })} />
     </section>
     {selectedHomeServer && <ServerDetailsPanel key={`${state.activeAccount?.id}:${selectedHomeServer.address}`} accountId={state.activeAccount?.id} server={selectedHomeServer} onClose={() => setSelectedHomeServer(null)} onConnect={() => { setSelectedHomeServer(null); void connect(selectedHomeServer); }} />}
     </>
@@ -635,7 +524,7 @@ function FavoriteCard({ favorite, onConnect, onRemove, onDetails }: { favorite: 
     if (event.key === "Enter" || event.key === " ") { event.preventDefault(); queueServerHandoff(favorite.address, event.currentTarget, "details"); onDetails(); }
   };
   const safeAddress = sanitizeServerAddress(favorite.address) || "Адрес скрыт";
-  return <article data-server-address={safeAddress} className="favorite-card" role="button" tabIndex={0} aria-label={`Подробнее об избранном сервере ${favorite.name || safeAddress}`} onClick={handleCardClick} onKeyDown={handleKeyDown}><div className="favorite-card-top"><ServerMark /><span className="server-status online" /><button className="favorite-star" aria-label="Удалить из избранного" onClick={(event) => { event.stopPropagation(); onRemove(); }}><Star size={16} fill="currentColor" /></button></div><h3>{favorite.name || "Без названия"}</h3><p>{safeAddress}</p><button className="card-connect" onClick={(event) => { event.stopPropagation(); queueServerHandoff(favorite.address, event.currentTarget, "launch"); onConnect(); }}>Подключиться <ArrowRight className="action-arrow" size={14} /></button></article>;
+  return <article data-server-address={safeAddress} className="favorite-card" role="button" tabIndex={0} aria-label={`Подробнее об избранном сервере ${favorite.name || safeAddress}`} onClick={handleCardClick} onKeyDown={handleKeyDown}><div className="favorite-card-top"><ServerMark /><span className="favorite-saved">В избранном</span><button className="favorite-star" aria-label="Удалить из избранного" onClick={(event) => { event.stopPropagation(); onRemove(); }}><Star size={16} fill="currentColor" /></button></div><h3>{favorite.name || "Без названия"}</h3><p>{safeAddress}</p><button className="card-connect" onClick={(event) => { event.stopPropagation(); queueServerHandoff(favorite.address, event.currentTarget, "launch"); onConnect(); }}>Подключиться <ArrowRight className="action-arrow" size={14} /></button></article>;
 }
 
 function FavoriteMonitoring({ summaries, loading, error, onRefresh }: { summaries: FavoriteMonitorSummary[]; loading: boolean; error: string | null; onRefresh: () => void }) {
@@ -649,12 +538,13 @@ function FavoriteMonitorCard({ summary, style }: { summary: FavoriteMonitorSumma
   return <article className={`monitoring-card ${summary.isOnline ? "online" : "offline"}`} style={style}><div className="monitoring-card-head"><span className="monitoring-status"><span className="server-status" />{stateLabel}</span>{summary.isOnline ? <Wifi size={15} /> : <WifiOff size={15} />}</div><h3>{summary.name || safeAddress}</h3><p className="monitoring-address">{safeAddress}</p><div className="monitoring-stats"><div><span>Онлайн</span><strong>{summary.playerCount == null ? "—" : `${summary.playerCount}${summary.softMaxPlayerCount ? ` / ${summary.softMaxPlayerCount}` : ""}`}</strong>{summary.playerDelta != null && <small className={summary.playerDelta > 0 ? "positive" : summary.playerDelta < 0 ? "negative" : ""}>{formatDelta(summary.playerDelta, " игроков")}</small>}</div><div><span>Ping</span><strong>{summary.pingMs == null ? "—" : `${summary.pingMs} ms`}</strong>{summary.pingDeltaMs != null && <small className={summary.pingDeltaMs > 0 ? "negative" : summary.pingDeltaMs < 0 ? "positive" : ""}>{formatDelta(summary.pingDeltaMs, " ms")}</small>}</div>{points && <svg className="monitoring-sparkline" viewBox="0 0 120 34" role="img" aria-label="История ping за 30 дней"><polyline points={points} /></svg>}</div><div className="monitoring-card-foot"><span>{summary.samples.length > 0 ? `Обновлено ${formatDurationSince(summary.samples[summary.samples.length - 1].capturedAt)}` : "Ожидает проверки"}</span><span>{summary.samples.length} замеров</span></div></article>;
 }
 
-function ServersView({ state, tool, onToolChange, onStateChange, profiles, profilesBusy, onUseProfile, onCreateProfile, onUpdateProfile, onRemoveProfile }: { state: LauncherState; tool: CatalogTool | null; onToolChange: (tool: CatalogTool | null) => void; onStateChange: (state: LauncherState) => void; profiles: LaunchProfile[]; profilesBusy: boolean; onUseProfile: (profile: LaunchProfile) => void | Promise<void>; onCreateProfile: (draft: LaunchProfileDraft) => void | Promise<void>; onUpdateProfile: (id: string, draft: LaunchProfileDraft) => void | Promise<void>; onRemoveProfile: (profile: LaunchProfile) => void | Promise<void> }) {
+function ServersView({ state, tool, onToolChange, onStateChange, profiles, profilesBusy, profileStatus, onUseProfile, onCreateProfile, onUpdateProfile, onRemoveProfile }: { state: LauncherState; tool: CatalogTool | null; onToolChange: (tool: CatalogTool | null) => void; onStateChange: (state: LauncherState) => void; profiles: LaunchProfile[]; profilesBusy: boolean; profileStatus: ProfileLoadState; onUseProfile: (profile: LaunchProfile) => void | Promise<void>; onCreateProfile: (draft: LaunchProfileDraft) => void | Promise<void>; onUpdateProfile: (id: string, draft: LaunchProfileDraft) => void | Promise<void>; onRemoveProfile: (profile: LaunchProfile) => void | Promise<void> }) {
   const [servers, setServers] = useState<Server[]>([]);
   const [queryInput, setQueryInput] = useState("");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [catalogFailure, setCatalogFailure] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [onlyPopulated, setOnlyPopulated] = useState(false);
   const [selectedServer, setSelectedServer] = useState<Server | null>(null);
@@ -678,7 +568,7 @@ function ServersView({ state, tool, onToolChange, onStateChange, profiles, profi
     if (next === catalogSnapshot.current) return;
     catalogSnapshot.current = next;
     setServers(next.servers);
-    setError(catalogError(next));
+    setCatalogFailure(catalogError(next));
   }, []);
 
   const loadMonitoring = useCallback(async (refresh = false) => {
@@ -701,14 +591,14 @@ function ServersView({ state, tool, onToolChange, onStateChange, profiles, profi
 
   const load = useCallback(async (manual = false) => {
     const sequence = ++loadSequence.current;
-    setLoading(true); setError(null);
+    setLoading(true); setCatalogFailure(null);
     try {
       const result = await window.mados.invoke<ServerListResult>(manual ? "servers.refresh" : "servers.list");
       if (sequence !== loadSequence.current) return;
       applyCatalog(result);
     } catch (e) {
       if (sequence === loadSequence.current) {
-        setError((e as Error).message);
+        setCatalogFailure((e as Error).message);
         setLoading(false);
       }
     }
@@ -797,10 +687,14 @@ function ServersView({ state, tool, onToolChange, onStateChange, profiles, profi
       setDirectAddress("");
     } catch (caught) { setError((caught as Error).message); }
   };
+  const findFavorite = (address: string) => {
+    const key = sanitizeServerAddress(address);
+    return key ? state.favorites.find(favorite => sanitizeServerAddress(favorite.address) === key) : undefined;
+  };
   const toggleFavorite = async (server: Server) => {
-    const exists = state.favorites.some((favorite) => favorite.address === server.address);
+    const existing = findFavorite(server.address);
     try {
-      const favorites = await window.mados.invoke<Favorite[]>(exists ? "favorites.remove" : "favorites.add", exists ? { address: server.address } : { address: server.address, name: server.name });
+      const favorites = await window.mados.invoke<Favorite[]>(existing ? "favorites.remove" : "favorites.add", existing ? { address: existing.address } : { address: server.address, name: server.name });
       onStateChange({ ...state, favorites });
     } catch (caught) {
       setError((caught as Error).message);
@@ -813,17 +707,20 @@ function ServersView({ state, tool, onToolChange, onStateChange, profiles, profi
     <div className="toolbar"><label className="search-box"><Search size={17} /><input value={queryInput} onChange={(event) => setQueryInput(event.target.value)} placeholder="Поиск по названию или адресу" /></label><button className={`filter-button ${showFilters ? "active" : ""}`} onClick={() => setShowFilters((value) => !value)}><SlidersHorizontal size={16} /> Фильтры {(onlyPopulated || selectedTags.length > 0) && <span className="filter-count">{selectedTags.length + (onlyPopulated ? 1 : 0)}</span>}</button><SelectField className="sort-select" label="Сортировка серверов" value={sort} onChange={value => setSort(value as typeof sort)} options={[{value: "players", label: "По онлайну"}, {value: "name", label: "По названию"}]} /></div>
     {showFilters && <div className="filter-drawer"><div className="filter-drawer-head"><div><strong>Фильтры серверов</strong><span>Настройте каталог под себя</span></div>{(onlyPopulated || selectedTags.length > 0) && <button className="filter-reset" onClick={() => { setSelectedTags([]); setOnlyPopulated(false); localStorage.removeItem("mados.serverFilters"); }}>Сбросить</button>}</div><div className="filter-chip-list"><button className={`filter-chip ${onlyPopulated ? "selected" : ""}`} onClick={() => setOnlyPopulated((value) => !value)}><Users size={15} /> Только с игроками</button>{filterOptions.map((tag) => <button key={tag} className={`filter-chip ${selectedTags.includes(tag) ? "selected" : ""}`} onClick={() => toggleTag(tag)}>{formatFilterTag(tag)}</button>)}{filterOptions.length === 0 && <span className="filter-hint">Фильтры появятся после загрузки тегов серверов.</span>}</div></div>}
     {error && <InlineError message={error} onClose={() => setError(null)} />}
+    {catalogFailure && <ViewState compact={servers.length>0} kind="error" title="Не удалось обновить каталог" description={catalogFailure} action="Повторить загрузку" actionId="retry-catalog" onAction={() => void load(true)}/>}
     <div ref={utilitiesRef} className="catalog-utilities" aria-label="Дополнительно в каталоге">
+      <button id="catalog-favorites-toggle" className="catalog-utility-toggle" aria-expanded={tool === "favorites"} aria-controls="catalog-favorites" onClick={() => onToolChange(tool === "favorites" ? null : "favorites")}><Star size={15}/>Моя коллекция<span className="utility-count">{state.favorites.length}</span><ChevronDown size={14}/></button>
       <button id="catalog-monitoring-toggle" className="catalog-utility-toggle" aria-expanded={tool === "monitoring"} aria-controls="catalog-monitoring" onClick={() => onToolChange(tool === "monitoring" ? null : "monitoring")}><Activity size={15} />Избранное сейчас<span className="utility-count">{state.favorites.length}</span>{monitoringError && <AlertTriangle size={13} className="utility-warning" />}<ChevronDown size={14} /></button>
       <button id="catalog-profiles-toggle" className="catalog-utility-toggle" aria-expanded={tool === "profiles"} aria-controls="catalog-profiles" onClick={() => onToolChange(tool === "profiles" ? null : "profiles")}><Play size={14} />Профили<span className="utility-count">{profiles.length}</span><ChevronDown size={14} /></button>
       <button id="catalog-direct-toggle" className="catalog-utility-toggle" aria-expanded={tool === "direct"} aria-controls="catalog-direct" onClick={() => onToolChange(tool === "direct" ? null : "direct")}><TerminalSquare size={15} />По адресу<ChevronDown size={14} /></button>
       <span className="catalog-result-count">{filtered.length} {pluralize(filtered.length, "сервер", "сервера", "серверов")}</span>
     </div>
     {monitoringError && tool !== "monitoring" && <div className="catalog-monitoring-warning" role="status"><AlertTriangle size={14} /><span>{monitoringError}</span><button className="text-link" onClick={() => onToolChange("monitoring")}>Подробнее <ArrowRight size={13} /></button></div>}
+    <div className="catalog-utility-panel" id="catalog-favorites" role="region" aria-labelledby="catalog-favorites-toggle" hidden={tool !== "favorites"}><FavoriteCollection accountId={state.activeAccount!.id} favorites={state.favorites} servers={servers} onConnect={server=>void connect(server)} onDetails={setSelectedServer} onRemove={async favorite=>{const favorites=await window.mados.invoke<Favorite[]>("favorites.remove",{address:favorite.address});onStateChange({...state,favorites});}} onBrowse={()=>onToolChange(null)}/></div>
     <div className="catalog-utility-panel" id="catalog-monitoring" role="region" aria-labelledby="catalog-monitoring-toggle" hidden={tool !== "monitoring"}><FavoriteMonitoring summaries={monitoring} loading={monitoringLoading} error={monitoringError} onRefresh={() => void loadMonitoring(true)} /></div>
-    <div className="catalog-utility-panel" id="catalog-profiles" role="region" aria-labelledby="catalog-profiles-toggle" hidden={tool !== "profiles"}><LaunchProfiles key={state.activeAccount?.id} profiles={profiles} busy={profilesBusy} onUse={onUseProfile} onCreate={onCreateProfile} onUpdate={onUpdateProfile} onRemove={onRemoveProfile} /></div>
+    <div className="catalog-utility-panel" id="catalog-profiles" role="region" aria-labelledby="catalog-profiles-toggle" hidden={tool !== "profiles"}><LaunchProfiles {...profileStatus} key={state.activeAccount?.id} profiles={profiles} busy={profilesBusy} onUse={onUseProfile} onCreate={onCreateProfile} onUpdate={onUpdateProfile} onRemove={onRemoveProfile} /></div>
     <div className="catalog-utility-panel" id="catalog-direct" role="region" aria-labelledby="catalog-direct-toggle" hidden={tool !== "direct"}><div className="direct-connect"><TerminalSquare size={16} /><input aria-label="Адрес сервера" value={directAddress} onChange={(event) => setDirectAddress(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void connectDirect(); }} placeholder="ss14://адрес сервера" /><button className="primary-button" onClick={() => void connectDirect()} disabled={!directAddress.trim()}><ArrowRight size={15} />Подключиться</button></div></div>
-    {loading && servers.length === 0 ? <div className="server-grid">{Array.from({ length: 6 }, (_, index) => <div className="server-skeleton" key={index}><span /><span /><span /></div>)}</div> : filtered.length > 0 ? <div className="server-grid">{filtered.map((server) => <ServerCard key={server.address} server={server} favorite={state.favorites.some((favorite) => favorite.address === server.address)} hasNote={noteAddresses.has(sanitizeServerAddress(server.address))} onConnect={() => void connect(server)} onFavorite={() => void toggleFavorite(server)} onDetails={() => setSelectedServer(server)} />)}</div> : <EmptyState icon={<Search size={23} />} title="Ничего не найдено" description="Измените запрос или сбросьте фильтры." action="Сбросить фильтры" onAction={() => { setQueryInput(""); setSelectedTags([]); setOnlyPopulated(false); localStorage.removeItem("mados.serverFilters"); }} />}
+    {loading && servers.length === 0 ? <LoadingCards count={6} className="server-grid" itemClassName="server-skeleton" label="Загружаем серверы…"/> : filtered.length > 0 ? <div className="server-grid">{filtered.map((server) => <ServerCard key={server.address} server={server} favorite={Boolean(findFavorite(server.address))} hasNote={noteAddresses.has(sanitizeServerAddress(server.address))} onConnect={() => void connect(server)} onFavorite={() => void toggleFavorite(server)} onDetails={() => setSelectedServer(server)} />)}</div> : catalogFailure && servers.length === 0 ? null : <EmptyState icon={<Search size={23} />} title="Ничего не найдено" description="Измените запрос или сбросьте фильтры." action="Сбросить фильтры" onAction={() => { setQueryInput(""); setSelectedTags([]); setOnlyPopulated(false); localStorage.removeItem("mados.serverFilters"); }} />}
     </section>
     {selectedServer && <ServerDetailsPanel key={`${state.activeAccount?.id}:${selectedServer.address}`} accountId={state.activeAccount?.id} server={selectedServer} onClose={() => { setSelectedServer(null); void loadNotes(); }} onConnect={() => { setSelectedServer(null); void connect(selectedServer); }} />}
   </>;
@@ -862,174 +759,21 @@ function formatFilterTag(tag: string): string {
   return tag.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function NewsView() {
-  const [items, setItems] = useState<NewsItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const loadSequence = useRef(0);
-  const load = async () => {
-    const sequence = ++loadSequence.current;
-    setLoading(true); setError(null);
-    try {
-      const nextItems = await window.mados.invoke<NewsItem[]>("news.list");
-      if (sequence === loadSequence.current) setItems(nextItems);
-    } catch (e) {
-      if (sequence === loadSequence.current) setError((e as Error).message);
-    } finally {
-      if (sequence === loadSequence.current) setLoading(false);
-    }
-  };
-  useEffect(() => { void load(); }, []);
-  return <section className="page page-enter"><div className="page-heading"><div><p className="eyebrow">Последние обновления</p><h1>Новости</h1><p className="page-subtitle">События Space Station 14 и релизы Mados Launcher с GitHub.</p></div><button className="icon-button" onClick={() => void load()} aria-label="Обновить"><RefreshCw size={18} className={loading ? "spin" : ""} /></button></div>{error && <InlineError message={error} onClose={() => setError(null)} />}{loading ? <div className="news-list">{Array.from({ length: 3 }, (_, index) => <div className="news-skeleton" key={index} />)}</div> : <div className="news-list">{items.map((item, index) => <article className="news-card" key={`${item.link}-${index}`}><div className="news-icon"><Newspaper size={18} /></div><div className="news-copy"><span className="eyebrow">{item.source ?? "Space Station 14"}{item.date ? ` · ${new Date(item.date).toLocaleDateString()}` : ""}</span><h3>{item.title}</h3>{item.summary && <p className="news-summary">{item.summary}</p>}<button className="text-link" onClick={() => void window.mados.openExternal(item.link)}>Открыть публикацию <ExternalLink className="external-link" size={14} /></button></div></article>)}{items.length === 0 && <EmptyState icon={<Newspaper size={23} />} title="Новостей пока нет" description="Попробуйте обновить ленту позже." action="Повторить" onAction={() => void load()} />}</div>}</section>;
-}
-
-function PlaytimeView({ state, onNavigate }: { state: LauncherState; onNavigate: (tab: Tab) => void }) {
-  const confirm = useConfirm(state.activeAccount?.id);
-  const [period, setPeriod] = useState<PlaytimePeriod>("all");
-  const [summary, setSummary] = useState<PlaytimeSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [clearing, setClearing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [clock, setClock] = useState(() => Date.now());
-
-  const load = useCallback(async (showLoading = false) => {
-    if (showLoading) setLoading(true);
-    setRefreshing(true);
-    setError(null);
-    try {
-      setSummary(await window.mados.invoke<PlaytimeSummary>("playtime.getSummary", { period }));
-    } catch (caught) {
-      setError((caught as Error).message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [period]);
-
-  useEffect(() => { void load(true); }, [load, state.activeAccount?.id]);
-
-  useEffect(() => {
-    const unsubscribe = window.mados.onEvent((event) => {
-      if (event.event === "playtime.updated" || event.event === "auth.changed") void load();
-    });
-    return unsubscribe;
-  }, [load]);
-
-  useEffect(() => {
-    if (!summary?.activeSession) return;
-    const timer = window.setInterval(() => setClock(Date.now()), 60_000);
-    return () => window.clearInterval(timer);
-  }, [summary?.activeSession]);
-
-  useEffect(() => {
-    if (!notice) return;
-    const timer = window.setTimeout(() => setNotice(null), 2600);
-    return () => window.clearTimeout(timer);
-  }, [notice]);
-
-  const active = summary?.activeSession;
-  const activeSeconds = active ? Math.max(active.elapsedSeconds, Math.floor((clock - new Date(active.startedAt).getTime()) / 1000)) : 0;
-  const clearHistory = async () => {
-    if (!await confirm({title: "Удалить историю игры?", message: "Удалить накопленное время текущего аккаунта? Текущая игровая сессия продолжит считаться.", confirmLabel: "Удалить историю", destructive: true})) return;
-    setClearing(true);
-    setError(null);
-    try {
-      const result = await window.mados.invoke<{ removed: number }>("playtime.clear");
-      setNotice(result.removed > 0 ? `История очищена: удалено сессий — ${result.removed}.` : "Завершённых сессий для удаления не найдено.");
-      await load();
-    } catch (caught) {
-      setError((caught as Error).message);
-    } finally {
-      setClearing(false);
-    }
-  };
-
-  return <section className="page page-enter playtime-page">
-    <div className="page-heading"><div><p className="eyebrow">Личная статистика</p><h1>Время игры</h1><p className="page-subtitle">Сколько времени вы провели на разных серверах.</p></div><div className="heading-actions"><button className="icon-button" onClick={() => void load()} disabled={refreshing} aria-label="Обновить статистику" data-tooltip="Обновить статистику"><RefreshCw size={18} className={refreshing ? "refresh-once" : ""} /></button><button className="icon-button playtime-clear-button" onClick={() => void clearHistory()} disabled={clearing || !summary || summary.sessionCount === 0} aria-label="Удалить историю" data-tooltip="Удалить историю"><Trash2 size={18} /></button></div></div>
-    <div className="playtime-periods" role="tablist" aria-label="Период статистики"><CalendarDays size={15} className="muted-icon" />{(["all", "today", "sevenDays"] as PlaytimePeriod[]).map((item) => <button key={item} role="tab" aria-selected={period === item} className={period === item ? "active" : ""} onClick={() => setPeriod(item)}>{playtimePeriodLabel(item)}</button>)}</div>
-    {error && <InlineError message={error} onClose={() => setError(null)} />}
-    {notice && <div className="inline-success"><Check size={16} /><span>{notice}</span></div>}
-    {loading ? <div className="playtime-summary-grid">{Array.from({ length: 3 }, (_, index) => <div className="playtime-skeleton" key={index} />)}</div> : summary && <>
-      <div className="playtime-summary-grid"><PlaytimeStat icon={<Clock3 size={19} />} label="Общее время" value={formatPlaytimeDuration(summary.totalSeconds)} /><PlaytimeStat icon={<Activity size={19} />} label="Сессии" value={String(summary.sessionCount)} /><PlaytimeStat icon={<Globe2 size={19} />} label="Серверы" value={String(summary.uniqueServers)} /></div>
-      {active && <div className="playtime-active-card"><div className="playtime-active-icon"><TimerReset size={22} /></div><div className="playtime-active-copy"><span className="eyebrow">Сейчас играете</span><h2>{active.name || active.address}</h2><p>{active.address}</p></div><strong className="playtime-live-value">{formatPlaytimeDuration(activeSeconds)}</strong></div>}
-      <div className="section-heading"><div><h2>Серверы</h2><span>{summary.trackedSince ? `Учёт с ${formatPlaytimeDate(summary.trackedSince)}` : "Учёт начнётся после первой игры"}</span></div></div>
-      {summary.servers.length === 0 ? <EmptyState icon={<Clock3 size={23} />} title="Истории пока нет" description="Запустите сервер, и Mados Launcher начнёт считать реальное время игры." action="Открыть серверы" onAction={() => onNavigate("servers")} /> : <div className="playtime-server-grid">{summary.servers.map((server, index) => <article className={`playtime-server-card ${server.active ? "active" : ""}`} style={{ "--playtime-delay": `${index * 35}ms` } as CSSProperties} key={server.address}><div className="playtime-server-top"><span className={`server-status ${server.active ? "online" : "offline"}`} /><span>{server.active ? "Сейчас играете" : "Сервер"}</span><Clock3 size={15} className="playtime-card-icon" /></div><h3>{server.name || server.address}</h3><p>{server.address}</p><div className="playtime-server-value">{formatPlaytimeDuration(server.totalSeconds)}</div><div className="playtime-card-meta"><span>{server.sessionCount} {pluralize(server.sessionCount, "сессия", "сессии", "сессий")}</span><span>{server.lastPlayedAt ? `Последний запуск ${formatPlaytimeDate(server.lastPlayedAt)}` : "Нет завершённых запусков"}</span></div></article>)}</div>}
-    </>}
-  </section>;
-}
-
-function PlaytimeStat({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-  return <div className="playtime-stat"><span className="playtime-stat-icon">{icon}</span><div><span>{label}</span><strong>{value}</strong></div></div>;
-}
-
-function playtimePeriodLabel(period: PlaytimePeriod): string {
-  return period === "today" ? "Сегодня" : period === "sevenDays" ? "7 дней" : "Всё время";
-}
-
-function formatPlaytimeDuration(seconds: number): string {
-  const totalMinutes = Math.max(0, Math.floor(seconds / 60));
-  if (totalMinutes < 1) return "меньше минуты";
-  const days = Math.floor(totalMinutes / (24 * 60));
-  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
-  const minutes = totalMinutes % 60;
-  if (days > 0) return `${days} д ${hours} ч ${minutes} мин`;
-  if (hours > 0) return `${hours} ч ${minutes} мин`;
-  return `${minutes} мин`;
-}
-
-function formatPlaytimeDate(value: string): string {
-  return new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
-}
-
 function pluralize(value: number, one: string, few: string, many: string): string {
   const mod10 = value % 10;
   const mod100 = value % 100;
   return mod10 === 1 && mod100 !== 11 ? one : mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20) ? few : many;
 }
 
-function SettingsView({ settings, setSettings, theme, setTheme, discordStatus, shellUpdate, launchBusy }: { settings: LauncherSettings | null; setSettings: (settings: LauncherSettings) => void; theme: ThemeId; setTheme: (theme: ThemeId) => void; discordStatus: DiscordPresenceStatus; shellUpdate: ShellUpdate; launchBusy: boolean }) {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [reducedMotion, setReducedMotion] = useState(() => localStorage.getItem("mados.reducedMotion") === "true");
-  const [section, setSection] = useState<"account" | "appearance" | "discord" | "compatibility" | "diagnostics" | "updates">("account");
-  if (!settings) return <LoadingScreen />;
-  const update = async (patch: Partial<LauncherSettings>) => { setSaving(true); setError(null); try { setSettings(await window.mados.invoke<LauncherSettings>("settings.update", patch)); } catch (caught) { setError((caught as Error).message); } finally { setSaving(false); } };
-  const navItems: Array<{ id: typeof section; label: string; icon: typeof UserRound }> = [
-    { id: "account", label: "Аккаунт", icon: UserRound },
-    { id: "appearance", label: "Внешний вид", icon: Sparkles },
-    { id: "discord", label: "Discord", icon: Radio },
-    { id: "compatibility", label: "Совместимость", icon: ShieldCheck },
-    { id: "diagnostics", label: "Диагностика", icon: TerminalSquare },
-    { id: "updates", label: "Обновления", icon: Download },
-  ];
-  const discordLabel = discordStatus === "connected" ? "Discord подключён" : discordStatus === "disabled" ? "Rich Presence отключён" : "Discord не найден";
-  const discordTone = discordStatus === "connected" ? "success" : discordStatus === "disabled" ? "muted" : "warning";
-  return <section className="page page-enter"><div className="page-heading"><div><p className="eyebrow">Персонализация</p><h1>Настройки</h1><p className="page-subtitle">Управляйте аккаунтом и поведением лаунчера.</p></div>{saving && <LoaderCircle className="spin muted-icon" size={19} />}</div>{error && <InlineError message={error} onClose={() => setError(null)} />}<div className="settings-layout"><div className="settings-nav">{navItems.map(({ id, label, icon: Icon }) => <button key={id} className={`settings-nav-item ${section === id ? "active" : ""}`} onClick={() => setSection(id)}><Icon className="settings-nav-icon" size={16} /> {label}</button>)}</div><div className="settings-panels">{section === "updates" && <LauncherUpdateView update={shellUpdate} expanded launchBusy={launchBusy} />}{section === "account" && <SettingsGroup title="Аккаунт" icon={<UserRound size={18} />}><SettingRow title="Текущий аккаунт" description={"Активная сессия Mados Launcher"}><span className="setting-value"><span className="status-dot" />Активен</span></SettingRow><SettingRow title="Управление аккаунтом" description="Открыть настройки учётной записи на официальном сайте"><button className="secondary-button" onClick={() => void window.mados.openExternal(settings.accountManagementUrl)}>Открыть <ExternalLink className="external-link" size={14} /></button></SettingRow></SettingsGroup>}{section === "appearance" && <SettingsGroup title="Внешний вид" icon={<Sparkles size={18} />}><SettingRow title="Цветовая тема" description="Меняет только акцентные цвета интерфейса"><ThemePicker value={theme} onChange={setTheme} /></SettingRow><SettingRow title="Уменьшить движение" description="Отключить переходы и анимации интерфейса"><Toggle checked={reducedMotion} onChange={(checked) => { setReducedMotion(checked); localStorage.setItem("mados.reducedMotion", String(checked)); document.documentElement.classList.toggle("reduce-motion", checked); }} /></SettingRow><SettingRow title="Уведомления доступности избранных" description="Сообщать, когда избранный сервер снова появился онлайн"><Toggle checked={settings.favoriteAvailabilityNotifications} onChange={(checked) => void update({ favoriteAvailabilityNotifications: checked })} /></SettingRow><SettingRow title="Язык интерфейса" description="Русский и English доступны в текущей версии"><LanguageSelect value={settings.language ?? "auto"} onChange={(value) => void update({ language: value === "auto" ? null : value })} /></SettingRow></SettingsGroup>}{section === "discord" && <SettingsGroup title="Discord" icon={<Radio size={18} />}><SettingRow title="Rich Presence" description="Показывать состояние Mados Launcher и игры в Discord"><Toggle checked={settings.discordPresenceEnabled} onChange={(checked) => void update({ discordPresenceEnabled: checked })} /></SettingRow><SettingRow title="Показывать ник в Discord" description="Ник фиксируется в момент запуска соединения и не передаёт токены"><Toggle checked={settings.discordPresenceShowNickname} disabled={!settings.discordPresenceEnabled} onChange={(checked) => void update({ discordPresenceShowNickname: checked })} /></SettingRow><SettingRow title="Состояние Discord" description="Лаунчер продолжает работать, если Discord закрыт"><span className={`setting-value discord-status-value ${discordTone}`}><span className="status-dot" />{discordLabel}</span></SettingRow><details className="discord-advanced"><summary><span><strong>Расширенные настройки</strong><small>Дополнительная картинка для Discord не обязательна</small></span><ChevronDown size={15} /></summary><div className="discord-advanced-body"><p>Rich Presence работает и без картинки. Asset <code>mados-cat</code> добавляет большую иллюстрацию в Discord-статус.</p><button className="secondary-button" onClick={() => void window.mados.openExternal("https://discord.com/developers/applications/1555589477492199434/rich-presence/assets")}>Открыть инструкцию <ExternalLink className="external-link" size={14} /></button></div></details></SettingsGroup>}{section === "compatibility" && <SettingsGroup title="Совместимость" icon={<ShieldCheck size={18} />}><SettingRow title="Compatibility mode" description="Использовать безопасные графические параметры"><Toggle checked={settings.compatMode} onChange={(checked) => void update({ compatMode: checked })} /></SettingRow><SettingRow title="Seasonal assets" description="Разрешить загрузку официальных override-ассетов"><Toggle checked={settings.overrideAssets} onChange={(checked) => void update({ overrideAssets: checked })} /></SettingRow></SettingsGroup>}{section === "diagnostics" && <SettingsGroup title="Диагностика" icon={<TerminalSquare size={18} />}><SettingRow title="Подробное логирование" description="Нужно для разбора сложных проблем запуска"><Toggle checked={settings.verboseLogging} onChange={(checked) => void update({ verboseLogging: checked })} /></SettingRow><SettingRow title="Версия" description="Mados Launcher"><span className="setting-value">{shellUpdate.currentVersion}</span></SettingRow></SettingsGroup>}</div></div></section>;
-}
-
-function SettingsGroup({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) { return <section className="settings-group"><div className="settings-group-title"><span className="settings-group-icon">{icon}</span><h2>{title}</h2></div><div className="settings-rows">{children}</div></section>; }
-function SettingRow({ title, description, children }: { title: string; description: string; children: ReactNode }) { return <div className="setting-row"><div><strong>{title}</strong><p>{description}</p></div>{children}</div>; }
-function Toggle({ checked, onChange, disabled = false }: { checked: boolean; onChange: (checked: boolean) => void; disabled?: boolean }) { return <button className={`toggle ${checked ? "checked" : ""}`} role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)}><span /></button>; }
-
-function ThemePicker({ value, onChange }: { value: ThemeId; onChange: (theme: ThemeId) => void }) {
-  return <div className="theme-picker" role="radiogroup" aria-label="Цветовая тема">{themeOptions.map((option) => <button type="button" key={option.id} className={`theme-option ${value === option.id ? "selected" : ""}`} aria-checked={value === option.id} role="radio" data-tooltip={option.label} onClick={() => onChange(option.id)}><span className="theme-swatch" style={{ background: option.swatch } as CSSProperties} /><span>{option.label}</span></button>)}</div>;
-}
-
-function LanguageSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
-  return <SelectField label="Язык интерфейса" value={value} onChange={onChange} icon={<Languages size={15} />} options={[{value:"auto",label:"Системный"},{value:"ru",label:"Русский"},{value:"en-US",label:"English"}]} />;
-}
-
-function LoginScreen({ onLoggedIn, expired = false, mode = "login", onCancel }: { onLoggedIn: (state: LauncherState) => void; expired?: boolean; mode?: "login" | "add"; onCancel?: () => void }) {
-  const [username, setUsername] = useState("");
+function LoginScreen({ onLoggedIn, expired = false, mode = "login", onCancel, initialUsername }: { onLoggedIn: (state: LauncherState) => void; expired?: boolean; mode?: "login" | "add"; onCancel?: () => void; initialUsername?: string }) {
+  const [username, setUsername] = useState(initialUsername ?? "");
   const [password, setPassword] = useState("");
   const [tfaCode, setTfaCode] = useState("");
   const [requiresTfa, setRequiresTfa] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const submit = async (event: FormEvent) => { event.preventDefault(); setBusy(true); setError(null); try { await window.mados.invoke("auth.login", { username, password, ...(requiresTfa ? { tfaCode } : {}) }); const next = await window.mados.invoke<LauncherState>("app.getState"); onLoggedIn(next); } catch (caught) { const requestError = caught as RequestError; if (requestError.code === "TFAREQUIRED" || requestError.code === "TFA_REQUIRED") setRequiresTfa(true); setError(requestError.details?.errors?.join("\n") ?? requestError.message); } finally { setBusy(false); } };
-  return <div className={`login-screen ${mode === "add" ? "login-overlay" : ""}`}><div className="login-backdrop" /><div className="login-panel">{mode === "add" && onCancel && <button className="icon-button login-close" onClick={onCancel} aria-label="Закрыть"><X size={18} /></button>}<div className="login-logo"><CatMark large /><span>Mados Launcher</span></div><div className="login-copy"><p className="eyebrow">{mode === "add" ? "Новый профиль" : "Добро пожаловать"}</p><h1>{mode === "add" ? "Добавить аккаунт" : expired ? "Сессия истекла" : "Войдите в аккаунт"}</h1><p>{mode === "add" ? "Добавьте ещё один аккаунт и переключайтесь между профилями из боковой панели." : expired ? "Войдите снова, чтобы продолжить игру." : "Продолжите игру на своей станции."}</p></div><form onSubmit={submit} className="login-form"><label>Имя пользователя<input autoFocus value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required /></label><label>Пароль<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>{requiresTfa && <label>Код 2FA<input inputMode="numeric" value={tfaCode} onChange={(event) => setTfaCode(event.target.value)} autoComplete="one-time-code" required /></label>}{error && <div className="form-error"><AlertTriangle size={16} /><span>{error}</span></div>}<button className="primary-button login-submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={18} /> : <LogIn size={18} />} {requiresTfa ? "Подтвердить вход" : mode === "add" ? "Добавить аккаунт" : "Войти"}</button></form><div className="login-links"><button onClick={() => void window.mados.openExternal("https://account.spacestation14.com/Identity/Account/Register")}>Создать аккаунт <ExternalLink size={13} /></button><button onClick={() => void window.mados.openExternal("https://account.spacestation14.com/Identity/Account/ForgotPassword")}>Забыли пароль?</button></div>{mode === "add" && onCancel && <button className="login-cancel" onClick={onCancel}>Отмена</button>}<div className="security-note"><ShieldCheck size={15} /> Данные входа обрабатываются защищённым C# worker</div></div></div>;
+  const submit = async (event: FormEvent) => { event.preventDefault(); if(busy)return; const finishTransition=beginAccountTransition(); setBusy(true); setError(null); try { await window.mados.invoke("auth.login", { username, password, ...(requiresTfa ? { tfaCode } : {}) }); const next = await window.mados.invoke<LauncherState>("app.getState"); onLoggedIn(next); } catch (caught) { const requestError = caught as RequestError; if (requestError.code === "TFAREQUIRED" || requestError.code === "TFA_REQUIRED") setRequiresTfa(true); setError(requestError.details?.errors?.join("\n") ?? requestError.message); } finally { finishTransition(); setBusy(false); } };
+  return <div className={`login-screen ${mode === "add" ? "login-overlay" : ""}`}><div className="login-backdrop" /><div className="login-panel">{mode === "add" && onCancel && <button className="icon-button login-close" onClick={onCancel} aria-label="Закрыть"><X size={18} /></button>}<div className="login-logo"><CatMark large /><span>Mados Launcher</span></div><div className="login-copy"><p className="eyebrow">{expired ? "Возвращение в аккаунт" : mode === "add" ? "Новый профиль" : "Добро пожаловать"}</p><h1>{expired ? "Войти снова" : mode === "add" ? "Добавить аккаунт" : "Войдите в аккаунт"}</h1><p>{expired ? "Сессия истекла. Введите пароль, чтобы вернуться в аккаунт." : mode === "add" ? "Добавьте ещё один аккаунт и переключайтесь между профилями из боковой панели." : "Продолжите игру на своей станции."}</p></div><form onSubmit={submit} className="login-form"><label>Имя пользователя<input autoFocus={!initialUsername} value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required /></label><label>Пароль<input autoFocus={Boolean(initialUsername)} type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label>{requiresTfa && <label>Код 2FA<input inputMode="numeric" value={tfaCode} onChange={(event) => setTfaCode(event.target.value)} autoComplete="one-time-code" required /></label>}{error && <div className="form-error"><AlertTriangle size={16} /><span>{error}</span></div>}<button className="primary-button login-submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={18} /> : <LogIn size={18} />} {requiresTfa ? "Подтвердить вход" : expired ? "Войти снова" : mode === "add" ? "Добавить аккаунт" : "Войти"}</button></form><div className="login-links"><button onClick={() => void window.mados.openExternal("https://account.spacestation14.com/Identity/Account/Register")}>Создать аккаунт <ExternalLink size={13} /></button><button onClick={() => void window.mados.openExternal("https://account.spacestation14.com/Identity/Account/ForgotPassword")}>Забыли пароль?</button></div>{mode === "add" && onCancel && <button className="login-cancel" onClick={onCancel}>Отмена</button>}<div className="security-note"><ShieldCheck size={15} /> Данные входа обрабатываются защищённым C# worker</div></div></div>;
 }
 
 function CatMark({ small = false, large = false }: { small?: boolean; large?: boolean }) {
@@ -1048,8 +792,8 @@ function CompatibilityBanner({ state, onStateChange }: { state: LauncherState; o
   return <div className="compatibility-banner"><AlertTriangle size={17} /><div><strong>{item.title}</strong><span>{item.description}</span></div>{item.action && <button className="ghost-button" onClick={() => void dismiss(item.action)}>Больше не показывать</button>}</div>;
 }
 
-function EmptyState({ icon, title, description, action, onAction }: { icon: React.ReactNode; title: string; description: string; action: string; onAction: () => void }) { return <div className="empty-state"><div className="empty-icon">{icon}</div><h2>{title}</h2><p>{description}</p><button className="secondary-button" onClick={onAction}>{action} <ArrowRight className="action-arrow" size={14} /></button></div>; }
-function InlineError({ message, onClose }: { message: string; onClose: () => void }) { return <div className="inline-error"><AlertTriangle size={16} /><span>{message}</span><button onClick={onClose} aria-label="Закрыть"><X size={15} /></button></div>; }
+function EmptyState(props: { icon: React.ReactNode; title: string; description: string; action: string; onAction: () => void }) { return <ViewState {...props}/>; }
+function InlineError({ message, onClose }: { message: string; onClose: () => void }) { return <ViewState compact kind="error" title="Не удалось выполнить действие" description={message} onDismiss={onClose}/>; }
 function FatalError({ message, onRetry }: { message: string; onRetry: () => void }) { return <div className="fatal-screen"><div className="fatal-icon"><AlertTriangle size={28} /></div><h1>Mados Launcher не запустился</h1><p>{message}</p><button className="primary-button" onClick={onRetry}><RefreshCw size={17} /> Повторить</button></div>; }
 function LoadingScreen({ startupState }: { startupState?: StartupState }) {
   const labels: Record<StartupState["stage"], string> = { "starting-worker": "Запускаем worker…", "checking-data": "Проверяем данные…", "loading-ui": "Загружаем интерфейс…", ready: "Готово" };
@@ -1061,10 +805,6 @@ async function openContentBundle() { const path = await window.mados.pickContent
 function NotificationToast({ notification, onClose, onOpen }: { notification: LauncherNotification; onClose: () => void; onOpen: () => void }) {
   const tone = notificationTone(notification.kind);
   return <div className={`notification-toast ${tone}`} role="status"><span className="notification-toast-icon">{tone === "success" ? <CheckCircle2 size={17} /> : <Bell size={17} />}</span><button className="notification-toast-copy" onClick={onOpen}><strong>{notification.title}</strong><span>{notification.message}</span></button><button className="notification-toast-close" aria-label="Закрыть уведомление" onClick={onClose}><X size={15} /></button></div>;
-}
-
-function NotificationJournal({ notifications, onRead, onClear, onClose }: { notifications: LauncherNotification[]; onRead: (notification: LauncherNotification) => void; onClear: () => void; onClose: () => void }) {
-  return <aside className="notification-journal" aria-label="Журнал уведомлений"><div className="notification-journal-head"><div><p className="eyebrow">События лаунчера</p><h2>Уведомления</h2></div><div className="modal-header-actions"><button className="icon-button" aria-label="Очистить уведомления" data-tooltip="Очистить" disabled={notifications.length === 0} onClick={onClear}><Trash2 size={16} /></button><button className="icon-button" aria-label="Закрыть уведомления" onClick={onClose}><X size={17} /></button></div></div>{notifications.length === 0 ? <div className="notification-empty"><Bell size={22} /><strong>Здесь пока пусто</strong><span>Новые события появятся после обновлений и возвращения избранных серверов.</span></div> : <div className="notification-list">{notifications.map((notification) => <button key={notification.id} className={`notification-item ${notification.readAt ? "read" : "unread"}`} onClick={() => onRead(notification)}><span className={`notification-item-icon ${notificationTone(notification.kind)}`}>{notification.kind === "favorite-online" ? <Wifi size={15} /> : <Bell size={15} />}</span><span className="notification-item-copy"><strong>{notification.title}</strong><span>{notification.message}</span><time dateTime={notification.createdAt}>{formatDurationSince(notification.createdAt)}</time></span>{!notification.readAt && <span className="notification-unread-dot" />}</button>)}</div>}</aside>;
 }
 
 function handleWorkerEvent(event: WorkerEvent, setState: Dispatch<SetStateAction<LauncherState | null>>, setSettings: Dispatch<SetStateAction<LauncherSettings | null>>, setConnection: Dispatch<SetStateAction<LaunchActivity | null>>, setStartupError: Dispatch<SetStateAction<string | null>>, setShellUpdate: Dispatch<SetStateAction<ShellUpdate>>) {

@@ -1,4 +1,32 @@
 import { describe, expect, it } from "vitest";
+import { playtimeSummarySchema, launcherNotificationSchema } from "./schema";
+import { validateRendererParams } from "./schema";
+it('restricts personal toolkit commands and validates their progress events',()=>{
+ for(const method of ['cache.info','cache.move','replays.list','replays.play','personal.restore','seatWatch.start','app.restart'])expect(rendererInvokeSchema.safeParse({method,params:{}}).success).toBe(true);
+ expect(rendererInvokeSchema.safeParse({method:'personal.apply',params:{}}).success).toBe(false);
+ expect(()=>validateRendererParams('replays.play',{id:'replay',path:'C:/secret.zip'})).toThrow();
+ expect(()=>validateRendererParams('seatWatch.start',{address:'ss14://station',accountId:'someone-else'})).toThrow();
+ expect(workerEventSchema.safeParse({v:1,event:'cache.progress',data:{stage:'ready',completedBytes:-1,totalBytes:4,destination:'D:/cache'}}).success).toBe(false);
+ expect(workerEventSchema.safeParse({v:1,event:'seatWatch.updated',data:{status:'available',accountId:'a',players:10,limit:40}}).success).toBe(true);
+});
+
+it("allows maintenance requests without accepting arbitrary cleanup paths or account overrides",()=>{
+  for(const method of ["diagnostics.run","storage.scan","storage.preview","storage.clean"])expect(rendererInvokeSchema.safeParse({method,params:{}}).success).toBe(true);
+  expect(()=>validateRendererParams("storage.clean",{planId:"a".repeat(32),path:"C:/Users"})).toThrow();
+  expect(()=>validateRendererParams("storage.preview",{ids:["../../settings.db"]})).toThrow();
+  expect(()=>validateRendererParams("diagnostics.run",{address:"ss14://station",accountId:"other"})).toThrow();
+  expect(validateRendererParams("storage.preview",{ids:["content:123"]})).toEqual({ids:["content:123"]});
+});
+
+it("rejects negative daily playtime and unsafe notification targets", () => {
+  const summary={accountId:"a",period:"all",trackedSince:null,totalSeconds:0,sessionCount:0,uniqueServers:0,activeSession:null,servers:[],dailyActivity:[{date:"2026-10-15",totalSeconds:60}]};
+  expect(playtimeSummarySchema.safeParse(summary).success).toBe(true);
+  expect(playtimeSummarySchema.safeParse({...summary,dailyActivity:[{date:"2026-10-15",totalSeconds:-1}]}).success).toBe(false);
+  const notification={id:"n",kind:"favorite-online",title:"Online",message:"Server",createdAt:new Date().toISOString(),readAt:null,accountId:"a",address:"ss14://station.example"};
+  expect(launcherNotificationSchema.safeParse(notification).success).toBe(true);
+  expect(launcherNotificationSchema.safeParse({...notification,address:"ss14://station.example?token=secret"}).success).toBe(false);
+  expect(launcherNotificationSchema.safeParse({...notification,address:"https://example.com"}).success).toBe(false);
+});
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { presenceSnapshotSchema, publicCdnUrlSchema, rendererInvokeSchema, toolsMethodParams, workerEventSchema, workerResponseSchema } from "./schema";

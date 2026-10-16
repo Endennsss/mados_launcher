@@ -1,0 +1,142 @@
+/* Current game and local-server tools continue the same Mados surfaces. */
+.launch-dock { border-radius:18px; background:var(--ui-card); border-color:var(--ui-line); }
+.launch-dock-row { padding:15px 19px; }
+.launch-dock.current-game-dock { border-color:var(--border); }
+.launch-dock.playing .launch-dock-icon { background:rgba(var(--accent-rgb),.1); color:var(--accent-hover); border-color:var(--border); }
+.launch-dock-icon[data-phase=playing] > svg { animation:session-ready 480ms var(--ui-ease) both; }
+.current-game-inline { display:flex; align-items:center; gap:17px; margin:0 12px; min-width:0; color:var(--text-muted); }
+.current-game-inline > span { display:flex; align-items:center; gap:7px; font-size:10px; white-space:nowrap; max-width:160px; overflow:hidden; text-overflow:ellipsis; }
+.current-game-inline svg { flex-shrink:0; color:var(--accent-hover); }
+.current-game-dock:has(.current-game-content) .launch-dock-row { border-bottom:1px solid var(--ui-line); }
+.current-game-dock .launch-dock-details { padding:0; border:0; }
+.current-game-content { padding:15px 20px 18px; animation:session-details-in 230ms var(--ui-ease) both; }
+.current-game-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.current-game-heading .eyebrow { font-size:9px; color:var(--text-muted); }
+.current-game-heading .icon-button { width:28px; height:28px; }
+.current-game-stats { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }
+.current-game-stats > div { display:grid; grid-template-columns:18px minmax(0,1fr); align-items:center; gap:8px; animation:session-details-in 280ms var(--ui-ease) both; }
+.current-game-stats > div:nth-child(2) { animation-delay:35ms; }
+.current-game-stats > div:nth-child(3) { animation-delay:70ms; }
+.current-game-stats > div:nth-child(4) { animation-delay:105ms; }
+.current-game-stats > div:nth-child(5) { animation-delay:140ms; }
+.current-game-stats svg { color:var(--accent-hover); }
+.current-game-stats span { font-size:10px; color:var(--text-muted); }
+.current-game-stats strong { grid-column:1/-1; font-size:12px; line-height:1.5; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; }
+.current-game-foot { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:18px; border-top:1px solid var(--ui-line); padding-top:13px; }
+.current-game-foot > span { color:var(--text-muted); font-size:9px; line-height:1.7; }
+.current-game-foot .text-link { display:flex; gap:7px; align-items:center; flex-shrink:0; font-size:10px; }
+.current-game-foot .text-link:hover .lucide-arrow-right { animation:session-arrow 350ms var(--ui-ease) both; }
+.session-recap { border-radius:18px; background:var(--ui-card); border-color:var(--border); animation:session-recap-arrive 300ms var(--ui-ease) both; }
+.tools-journey { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:20px 0; }
+.tools-journey > button { display:flex; align-items:center; text-align:left; gap:14px; min-width:0; padding:17px 18px; border:1px solid var(--ui-line); border-radius:16px; background:var(--ui-card); transition:background 150ms,border-color 150ms; }
+.tools-journey > button[aria-current] { border-color:var(--border); background:linear-gradient(130deg,rgba(var(--accent-rgb),.13),var(--card-end)); box-shadow:inset 0 0 0 1px rgba(var(--accent-rgb),.07); }
+.journey-symbol { position:relative; display:grid; place-items:center; height:40px; width:40px; border:1px solid var(--ui-line); border-radius:12px; flex-shrink:0; color:var(--text-muted); background:rgba(0,0,0,.1); }
+[aria-current] > .journey-symbol { color:var(--accent-hover); border-color:var(--border); }
+.journey-symbol > i { position:absolute; right:-5px; bottom:-4px; display:grid; place-items:center; height:16px; width:16px; border-radius:50%; background:var(--surface); color:var(--success); border:1px solid var(--ui-line); animation:session-confirm 250ms var(--ui-ease) both; }
+.tools-journey > button > span:last-child { min-width:0; display:flex; flex-direction:column; gap:4px; }
+.tools-journey small { color:var(--accent-hover); font-size:8px; font-weight:700; letter-spacing:.1em; }
+.tools-journey strong { font-size:13px; }
+.tools-journey > button > span:last-child > span { font-size:9px; color:var(--text-muted); line-height:1.5; }
+.tools-journey button:not(:disabled):hover .lucide-package-open { animation:session-ready 420ms var(--ui-ease) both; }
+.tools-journey button:not(:disabled):hover .lucide-sliders-horizontal { animation:session-settings 380ms var(--ui-ease) both; }
+.tools-journey button:not(:disabled):hover .lucide-play { animation:session-arrow 380ms var(--ui-ease) both; }
+.tools-profile-picker { display:flex; align-items:center; gap:15px; padding:17px 19px; border:1px solid var(--ui-line); border-radius:16px; background:rgba(var(--accent-rgb),.025); }
+.tools-profile-picker > div { display:flex; align-items:center; flex-wrap:wrap; gap:12px; min-width:0; }
+.tools-profile-picker .eyebrow { color:var(--text-muted); font-size:8px; }
+.tools-profile-picker .mados-select-trigger { max-width:300px; min-width:170px; }
+.tools-profile-picker .mados-select-trigger > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tools-profile-version { font-size:9px; color:var(--text-muted); overflow-wrap:anywhere; flex:1; }
+.tools-profile-picker > button { margin-left:auto; flex-shrink:0; }
+.tools-grid.tools-workspace { grid-template-columns:minmax(0,1fr); gap:15px; margin-bottom:20px; }
+.tools-workspace > [hidden] { display:none!important; }
+.tools-workspace > section:not([hidden]) { animation:session-tools-step 270ms var(--ui-ease) both; }
+.tools-workspace .tool-card-head { align-items:center; padding:21px 24px 18px; border-bottom:1px solid var(--ui-line); }
+.tools-workspace .tool-card-head h2 { font-size:15px; outline-offset:5px; }
+.tools-workspace .tool-card-head p { font-size:10px; }
+.tools-workspace :is(.tool-import-form,.tool-config-form,.local-server-controls) { padding:22px 24px; }
+.tools-workspace .tool-config-card { min-height:0; }
+.tools-workspace .tool-form-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:17px; }
+.tools-workspace .tool-config-form > details { margin:20px 0; border:1px solid var(--ui-line); background:rgba(0,0,0,.08); border-radius:12px; padding:13px 15px; }
+.tools-workspace .tool-config-form > details summary { display:flex; align-items:center; justify-content:space-between; font-size:11px; color:var(--text-muted); cursor:pointer; }
+.tools-workspace .tool-config-form > details[open] summary { margin-bottom:15px; color:var(--text); }
+.tools-workspace .tool-inline-actions { margin-top:20px; }
+.local-server-overview { display:flex; gap:21px; align-items:center; padding:5px 0 25px; }
+.local-server-emblem { height:76px; width:76px; display:grid; place-items:center; flex-shrink:0; border:1px solid var(--border); border-radius:22px; color:var(--accent-hover); background:linear-gradient(140deg,rgba(var(--accent-rgb),.14),rgba(var(--accent-rgb),.03)); animation:session-ready 380ms var(--ui-ease) both; }
+.local-server-overview.running .local-server-emblem::after { content:""; position:absolute; margin:64px 0 0 64px; width:9px; height:9px; border-radius:50%; background:var(--success); border:3px solid var(--surface); box-sizing:content-box; }
+.local-server-overview .eyebrow { font-size:8px; color:var(--accent-hover); }
+.local-server-overview h3 { margin:9px 0 8px; font-size:25px; line-height:1.3; letter-spacing:-.035em; overflow-wrap:anywhere; }
+.local-server-overview p { margin:0; font-size:11px; line-height:1.8; max-width:580px; color:var(--text-muted); overflow-wrap:anywhere; }
+.tools-workspace .local-server-meta { padding:12px 15px; border:1px solid var(--ui-line); border-radius:11px; background:rgba(0,0,0,.12); }
+.tools-workspace .local-server-controls .tool-actions { justify-content:flex-start; }
+.tools-draft-notice { display:flex; align-items:center; gap:10px; margin-top:16px; padding:14px; border:1px solid var(--border); border-radius:11px; font-size:10px; color:var(--text-muted); line-height:1.7; }
+.tools-draft-notice > svg { color:var(--warning); flex-shrink:0; }
+.tools-draft-notice > span { flex:1; }
+.tools-draft-notice .text-link { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+.server-log-panel { min-height:0; }
+.server-log-toggle { display:flex; align-items:center; gap:13px; padding:19px 23px; width:100%; background:transparent; text-align:left; }
+.server-log-toggle > span:nth-child(2) { flex:1; min-width:0; display:flex; flex-direction:column; gap:5px; }
+.server-log-toggle strong { font-size:13px; }
+.server-log-toggle small { color:var(--text-muted); font-size:10px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.server-log-toggle > .lucide-chevron-down { color:var(--text-muted); transition:transform 180ms var(--ui-ease); }
+.server-log-toggle > .lucide-chevron-down.expanded { transform:rotate(180deg); }
+.server-log-body { border-top:1px solid var(--ui-line); padding:16px 20px; animation:session-details-in 220ms var(--ui-ease) both; }
+.server-log-controls { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:14px; }
+.server-log-controls > div { display:flex; align-items:center; gap:6px; }
+.server-log-controls [data-log-filter] { font-size:10px; min-height:32px; padding:7px 12px; color:var(--text-muted); border:1px solid transparent; border-radius:9px; background:transparent; }
+.server-log-controls [data-log-filter][aria-pressed=true] { color:var(--text); border-color:var(--border); background:rgba(var(--accent-rgb),.09); }
+.server-log-controls .compact-button { font-size:10px; }
+.server-log-controls .icon-button { width:32px; height:32px; }
+.log-error-count { display:flex; align-items:center; gap:5px; color:var(--danger); font-size:10px; padding:5px 8px; border:1px solid var(--ui-line); border-radius:8px; }
+.server-log-body .tool-log-view { margin:0; max-height:290px; min-height:160px; border:1px solid var(--ui-line); border-radius:11px; background:rgba(0,0,0,.2); padding:10px 12px; overscroll-behavior:contain; overflow-anchor:none; }
+.server-log-body .tool-log-line { border-radius:5px; padding:5px 7px; gap:13px; font-size:10px; line-height:1.7; }
+.server-log-body .tool-log-line time { flex-shrink:0; font-size:9px; color:var(--text-muted); }
+.server-log-body .tool-log-line > span { overflow-wrap:anywhere; white-space:pre-wrap; }
+.server-log-body .tool-log-line.log-error { color:var(--danger); background:rgba(var(--accent-rgb),.06); border-left:2px solid var(--danger); }
+.server-log-body .tool-log-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; min-height:140px; text-align:center; padding:15px; }
+.server-log-body .tool-log-empty > svg { color:var(--accent-hover); }
+.server-log-body .tool-log-empty strong { font-size:12px; color:var(--text); }
+.server-log-body .tool-log-empty span { font-size:10px; }
+.server-log-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; font-size:9px; line-height:1.7; color:var(--text-muted); }
+.log-arrived { animation:session-log-arrived 240ms var(--ui-ease) both; }
+@keyframes session-ready { 0% {opacity:.4;transform:scale(.9) rotate(-9deg)} 65% {opacity:1;transform:scale(1.04) rotate(3deg)} 100% {transform:none} }
+@keyframes session-details-in { from {opacity:0;transform:translateY(7px)} to {opacity:1;transform:none} }
+@keyframes session-tools-step { from {opacity:0;transform:translateX(9px)} to {opacity:1;transform:none} }
+@keyframes session-recap-arrive { from {opacity:0;transform:translateY(7px) scale(.985)} to {opacity:1;transform:none} }
+@keyframes session-confirm { from {opacity:0;transform:scale(.5)} to {opacity:1;transform:none} }
+@keyframes session-arrow { 0% {transform:none} 60% {transform:translateX(4px)} 100% {transform:translateX(1px)} }
+@keyframes session-settings { 0% {transform:none} 40% {transform:translateY(-3px)} 75% {transform:translateY(1px)} 100% {transform:none} }
+@keyframes session-log-arrived { 0% {transform:none} 50% {transform:translateX(2px);color:var(--accent-hover)} 100% {transform:none} }
+@media(max-width:1050px) {
+  .tools-profile-picker { flex-wrap:wrap; }
+  .tools-profile-version { display:none; }
+  .tools-journey > button { gap:10px; padding:14px 12px; }
+  .tools-journey > button > span:last-child > span { font-size:8px; }
+  .current-game-inline { display:none; }
+}
+@media(max-width:800px) {
+  .tools-journey { gap:7px; }
+  .tools-journey > button { flex-direction:column; align-items:flex-start; }
+  .tools-journey > button > span:last-child { gap:3px; }
+  .tools-journey small { display:none; }
+  .tools-workspace :is(.tool-import-form,.tool-config-form,.local-server-controls) { padding:18px; }
+  .local-server-overview { gap:15px; }
+  .local-server-overview h3 { font-size:21px; }
+  .local-server-emblem { width:60px; height:60px; border-radius:18px; }
+  .local-server-overview.running .local-server-emblem::after { margin:48px 0 0 48px; }
+  .current-game-stats { grid-template-columns:repeat(3,minmax(0,1fr)); row-gap:15px; }
+  .tools-draft-notice { flex-wrap:wrap; }
+  .server-log-controls .compact-button > span { display:none; }
+}
+@media(max-width:600px) {
+  .tools-profile-picker > div,.tools-profile-picker .mados-select-trigger { width:100%; }
+  .tools-workspace .tool-form-grid { grid-template-columns:1fr; }
+  .tools-journey strong { font-size:11px; }
+  .tools-journey > button > span:last-child > span { display:none; }
+  .current-game-foot,.server-log-foot { flex-wrap:wrap; }
+}
+.reduce-motion :is(.current-game-content,.current-game-stats > div,.session-recap,.tools-workspace > section,.local-server-emblem,.server-log-body,.journey-symbol > i),
+.reduce-motion :is(.launch-dock,.tools-journey,.server-log-panel) svg { animation:none!important; transform:none!important; transition:none!important; }
+@media(prefers-reduced-motion:reduce) {
+  :is(.current-game-content,.current-game-stats > div,.session-recap,.tools-workspace > section,.local-server-emblem,.server-log-body,.journey-symbol > i),
+  :is(.launch-dock,.tools-journey,.server-log-panel) svg { animation:none!important; transform:none!important; transition:none!important; }
+}

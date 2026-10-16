@@ -16,6 +16,7 @@
   <ItemGroup>
     <ProjectReference Include="..\SS14.Launcher\SS14.Launcher.csproj"/>
     <Compile Include="..\Mados.Worker\ServerNotesStore.cs" Link="ServerNotesStore.cs" />
+    <Compile Include="..\Mados.Worker\NewsContent.cs" Link="NewsContent.cs" />
     <Compile Include="..\Mados.Worker\LauncherInsightsStore.cs" Link="LauncherInsightsStore.cs" />
     <Compile Include="..\Mados.Worker\FavoriteMonitoringQueue.cs" Link="FavoriteMonitoringQueue.cs" />
     <Compile Include="..\Mados.Worker\LocalServerStore.cs" Link="LocalServerStore.cs" />

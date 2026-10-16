@@ -75,7 +75,7 @@ VALUES (@Id, @AccountId, @Address, @ServerName, @CapturedAtUtc, @IsOnline, @Play
             if (createAvailabilityNotification && becameOnline)
             {
                 var serverName = normalized.ServerName ?? normalized.Address;
-                notification = AddNotificationLocked(connection, accountId, "favorite-online", "Сервер снова доступен", serverName, normalized.CapturedAtUtc);
+                notification = AddNotificationLocked(connection, accountId, "favorite-online", "Сервер снова доступен", serverName, normalized.CapturedAtUtc, address: normalized.Address);
             }
             return new MonitorSampleWriteResult(becameOnline, notification);
         }
@@ -191,17 +191,17 @@ VALUES (@Id, @AccountId, @Address, @Name, @CreatedAtUtc, NULL);", new
         }
     }
 
-    public LauncherNotification AddNotification(Guid? accountId, string kind, string title, string message, DateTimeOffset? createdAt = null)
+    public LauncherNotification AddNotification(Guid? accountId, string kind, string title, string message, DateTimeOffset? createdAt = null, string? address = null)
     {
         if (accountId is { } id)
             EnsureAccount(id);
         if (string.IsNullOrWhiteSpace(kind) || string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(message))
             throw new ArgumentException("Notification kind, title and message are required.");
-        var notification = new LauncherNotification(Guid.NewGuid().ToString("N"), kind.Trim(), TrimText(title, 240), TrimText(message, 1000), createdAt ?? DateTimeOffset.UtcNow, null);
+        var notification = new LauncherNotification(Guid.NewGuid().ToString("N"), kind.Trim(), TrimText(title, 240), TrimText(message, 1000), createdAt ?? DateTimeOffset.UtcNow, null, address==null?null:NormalizeAddress(address), accountId);
         lock (_gate)
         {
             using var connection = OpenConnection();
-            AddNotificationLocked(connection, accountId, notification.Kind, notification.Title, notification.Message, notification.CreatedAtUtc, notification.Id);
+            AddNotificationLocked(connection, accountId, notification.Kind, notification.Title, notification.Message, notification.CreatedAtUtc, notification.Id, notification.Address);
             return notification;
         }
     }
@@ -213,7 +213,7 @@ VALUES (@Id, @AccountId, @Address, @Name, @CreatedAtUtc, NULL);", new
         {
             using var connection = OpenConnection();
             return connection.Query<NotificationRow>(@"
-SELECT Id, AccountId, Kind, Title, Message, CreatedAtUtc, ReadAtUtc
+SELECT Id, AccountId, Kind, Title, Message, CreatedAtUtc, ReadAtUtc, Address
 FROM NotificationEvent WHERE AccountId = @AccountId OR AccountId IS NULL
 ORDER BY CreatedAtUtc DESC LIMIT @Limit;", new { AccountId = accountId.ToString(), Limit = MaxNotifications })
                 .Select(ToNotification)
@@ -338,6 +338,8 @@ CREATE TABLE IF NOT EXISTS NotificationEvent(
 CREATE INDEX IF NOT EXISTS IX_NotificationEvent_AccountId ON NotificationEvent(AccountId);
 CREATE INDEX IF NOT EXISTS IX_NotificationEvent_CreatedAtUtc ON NotificationEvent(CreatedAtUtc);
 ", commandTimeout: 10);
+            if (!connection.Query<string>("SELECT name FROM pragma_table_info('NotificationEvent')").Contains("Address"))
+                connection.Execute("ALTER TABLE NotificationEvent ADD COLUMN Address TEXT;");
         }
     }
 
@@ -364,10 +366,10 @@ CREATE INDEX IF NOT EXISTS IX_NotificationEvent_CreatedAtUtc ON NotificationEven
     private static LaunchProfileRow? FindProfile(SqliteConnection connection, Guid accountId, string id)
         => connection.QuerySingleOrDefault<LaunchProfileRow>("SELECT Id, Address, Name, CreatedAtUtc, LastUsedAtUtc FROM LaunchProfile WHERE AccountId = @AccountId AND Id = @Id;", new { AccountId = accountId.ToString(), Id = id });
 
-    private static LauncherNotification AddNotificationLocked(SqliteConnection connection, Guid? accountId, string kind, string title, string message, DateTimeOffset createdAt, string? id = null)
+    private static LauncherNotification AddNotificationLocked(SqliteConnection connection, Guid? accountId, string kind, string title, string message, DateTimeOffset createdAt, string? id = null, string? address = null)
     {
-        var notification = new LauncherNotification(id ?? Guid.NewGuid().ToString("N"), kind, title, message, createdAt.ToUniversalTime(), null);
-        connection.Execute(@"INSERT INTO NotificationEvent(Id, AccountId, Kind, Title, Message, CreatedAtUtc, ReadAtUtc) VALUES (@Id, @AccountId, @Kind, @Title, @Message, @CreatedAtUtc, NULL);", new { Id = notification.Id, AccountId = accountId?.ToString(), Kind = notification.Kind, Title = notification.Title, Message = notification.Message, CreatedAtUtc = FormatTimestamp(notification.CreatedAtUtc) });
+        var notification = new LauncherNotification(id ?? Guid.NewGuid().ToString("N"), kind, title, message, createdAt.ToUniversalTime(), null, address, accountId);
+        connection.Execute(@"INSERT INTO NotificationEvent(Id, AccountId, Kind, Title, Message, CreatedAtUtc, ReadAtUtc, Address) VALUES (@Id, @AccountId, @Kind, @Title, @Message, @CreatedAtUtc, NULL, @Address);", new { Id = notification.Id, AccountId = accountId?.ToString(), Kind = notification.Kind, Title = notification.Title, Message = notification.Message, CreatedAtUtc = FormatTimestamp(notification.CreatedAtUtc), Address = address });
         var cutoff = createdAt.ToUniversalTime().AddDays(-HistoryDays);
         connection.Execute("DELETE FROM NotificationEvent WHERE CreatedAtUtc < @Cutoff;", new { Cutoff = FormatTimestamp(cutoff) });
         var accountKey = accountId?.ToString();
@@ -386,14 +388,14 @@ CREATE INDEX IF NOT EXISTS IX_NotificationEvent_CreatedAtUtc ON NotificationEven
     }
 
     private static LaunchProfile ToProfile(LaunchProfileRow row) => new(row.Id, row.Address, row.Name, ParseTimestamp(row.CreatedAtUtc), ParseNullableTimestamp(row.LastUsedAtUtc));
-    private static LauncherNotification ToNotification(NotificationRow row) => new(row.Id, row.Kind, row.Title, row.Message, ParseTimestamp(row.CreatedAtUtc), ParseNullableTimestamp(row.ReadAtUtc));
+    private static LauncherNotification ToNotification(NotificationRow row) => new(row.Id, row.Kind, row.Title, row.Message, ParseTimestamp(row.CreatedAtUtc), ParseNullableTimestamp(row.ReadAtUtc), row.Address, row.AccountId is null ? null : Guid.Parse(row.AccountId));
     private static DateTimeOffset ParseTimestamp(string value) => DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind).ToUniversalTime();
     private static DateTimeOffset? ParseNullableTimestamp(string? value) => string.IsNullOrWhiteSpace(value) ? null : ParseTimestamp(value);
     private static string FormatTimestamp(DateTimeOffset value) => value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
 
     private sealed record MonitorSampleRow(string Address, string? ServerName, string CapturedAtUtc, long IsOnline, long? PlayerCount, long? SoftMaxPlayerCount, long? PingMs, string? Map, string? Mode);
     private sealed record LaunchProfileRow(string Id, string Address, string Name, string CreatedAtUtc, string? LastUsedAtUtc);
-    private sealed record NotificationRow(string Id, string? AccountId, string Kind, string Title, string Message, string CreatedAtUtc, string? ReadAtUtc);
+    private sealed record NotificationRow(string Id, string? AccountId, string Kind, string Title, string Message, string CreatedAtUtc, string? ReadAtUtc, string? Address);
 }
 
 public sealed record MonitorSample(string Address, string? ServerName, bool IsOnline, int? PlayerCount, int? SoftMaxPlayerCount, long? PingMs, string? Map, string? Mode, DateTimeOffset CapturedAtUtc = default);
@@ -402,4 +404,4 @@ public sealed record FavoriteMonitorTarget(string Address, string? Name);
 public sealed record MonitorSamplePoint(DateTimeOffset CapturedAt, bool IsOnline, long? PingMs, int? PlayerCount);
 public sealed record FavoriteMonitorSummary(string Address, string? Name, bool IsOnline, int? PlayerCount, int? SoftMaxPlayerCount, long? PingMs, long? PingDeltaMs, int? PlayerDelta, IReadOnlyList<MonitorSamplePoint> Samples);
 public sealed record LaunchProfile(string Id, string Address, string Name, DateTimeOffset CreatedAtUtc, DateTimeOffset? LastUsedAtUtc);
-public sealed record LauncherNotification(string Id, string Kind, string Title, string Message, DateTimeOffset CreatedAtUtc, DateTimeOffset? ReadAtUtc);
+public sealed record LauncherNotification(string Id, string Kind, string Title, string Message, DateTimeOffset CreatedAtUtc, DateTimeOffset? ReadAtUtc, string? Address = null, Guid? AccountId = null);

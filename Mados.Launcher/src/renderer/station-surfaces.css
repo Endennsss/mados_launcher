@@ -168,7 +168,6 @@
 .inspector-note .secondary-button:is(:hover, :focus-visible):not(:disabled) .lucide-save { animation: station-save 450ms ease both; }
 .inspector-note .icon-button:is(:hover, :focus-visible):not(:disabled) .lucide-trash2 { animation: station-trash 450ms ease both; }
 .inspector-toolbar .icon-button:is(:hover, :focus-visible):not(:disabled) .lucide-refresh-cw:not(.spin) { animation: gear-spin 650ms ease both; transform: none; }
-.inspector-toolbar .icon-button:is(:hover, :focus-visible) .lucide-x, .launch-dock-actions button:is(:hover, :focus-visible):not(:disabled) .lucide-x { animation: station-close 420ms ease both; }
 .launch-dock-details { animation: station-reveal 220ms ease both; }
 .launch-stage-label { display: inline-block; animation: station-reveal 220ms ease both; }
 .launch-dock-icon[data-phase="download"] svg { animation: station-download 950ms ease-in-out infinite; }

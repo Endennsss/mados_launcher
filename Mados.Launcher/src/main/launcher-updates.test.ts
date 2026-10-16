@@ -13,6 +13,16 @@ function setup(packaged=true) {
 }
 afterEach(()=>vi.useRealTimers());
 
+it("preserves release notes through download progress and clears stale release data after a fresh check",()=>{
+ const {updater,service}=setup();service.start();
+ updater.emit("update-available",{version:"0.42.0",releaseNotes:"## Изменения\n- Новое чтение новостей",releaseDate:"2026-10-15T18:00:00Z"});
+ updater.emit("download-progress",{percent:24,transferred:1200,total:5000,bytesPerSecond:600});
+ expect(service.snapshot()).toMatchObject({releaseNotes:"## Изменения\n- Новое чтение новостей",releaseDate:"2026-10-15T18:00:00.000Z",transferred:1200,total:5000,bytesPerSecond:600});
+ updater.emit("update-downloaded",{version:"0.42.0"});expect(service.snapshot().releaseNotes).toContain("Изменения");
+ updater.emit("update-not-available");expect(service.snapshot().releaseNotes).toBeUndefined();expect(service.snapshot().total).toBeUndefined();
+ service.stop();
+});
+
 it("checks on startup and hourly without installing during ordinary app exit", async()=>{
   vi.useFakeTimers(); const {updater,service}=setup(); service.start();
   await vi.advanceTimersByTimeAsync(10_000);

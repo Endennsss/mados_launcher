@@ -14,6 +14,12 @@ const release = (arch = "x64") => ({
     browser_download_url: `https://github.com/Endennsss/mados_launcher/releases/download/v0.41.0/Mados.Launcher.Windows.${arch}.exe` }],
 });
 
+it("delivers the selected GitHub release body to the updater without inventing notes",async()=>{
+ class FixtureProvider extends GitHubWindowsUpdateProvider {protected async httpRequest(){return JSON.stringify({...release(process.arch),body:"## Новости\n- Исправлены ошибки",name:"Mados 0.41.0"});}}
+ const provider=new FixtureProvider({},{} as AppUpdater,{} as ProviderRuntimeOptions);
+ const info=await provider.getLatestVersion();expect(info.releaseNotes).toBe("## Новости\n- Исправлены ошибки");expect(info.releaseDate).toBe("2026-10-15T12:00:00Z");
+});
+
 it("passes a real SHA256 digest through the updater resolver and rejects damaged bytes",async()=>{
   const bytes=Buffer.from("installer fixture");
   const payload=release(process.arch); payload.assets[0].digest=`sha256:${createHash("sha256").update(bytes).digest("hex")}`;

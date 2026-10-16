@@ -59,7 +59,10 @@
 }
 :is(.login-form, .launch-profile-form, .tool-form-grid, .tool-config-form) input { min-height: 38px; font-size: 12px; }
 input::placeholder, textarea::placeholder { color: var(--text-muted); opacity: .75; }
-:is(input, textarea):focus-visible, .search-box:focus-within { border-color: var(--accent-hover); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .1); }
+/* Text fields use one rounded ring; composite fields put it on their wrapper. */
+:is(input, textarea):not(:where([type="checkbox"], [type="radio"])):focus-visible { outline: none; border-color: var(--accent-hover); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .1); }
+.search-box:focus-within { border-color: var(--accent-hover); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), .1); }
+.search-box input:focus-visible { box-shadow: none; }
 button:focus-visible, [role="button"]:focus-visible, summary:focus-visible { outline: 2px solid var(--accent-hover); outline-offset: 3px; }
 :is(.filter-chip, .tag, .playtime-periods, .tool-config-tabs, .theme-option) { border-color: var(--ui-line); }
 :is(.playtime-periods, .tool-config-tabs) { padding: 4px; background: rgba(var(--accent-rgb), .04); border-radius: 12px; }
@@ -170,7 +173,11 @@ button:focus-visible, [role="button"]:focus-visible, summary:focus-visible { out
 [data-server-address].server-inspector { isolation: isolate; }
 
 /* Semantic icon reactions are shared by navigation, forms, cards and menus. */
-:where(.app-shell, .mados-dialog, .mados-select-menu, .mados-action-menu) :where(button, summary):where(:hover, :focus-visible):not(:disabled) > svg:where(:not(.spin):not(.icon-loading):not(.icon-refreshing):not(.refresh-once):not(.icon-pulse)) { transform: none; animation: mados-icon-greet 420ms var(--ui-ease) both; }
+:where(.app-shell, .mados-dialog, .mados-select-menu, .mados-action-menu) :where(button, summary):where(:hover, :focus-visible):not(:disabled) > svg:where(:not(.lucide-x):not(.spin):not(.icon-loading):not(.icon-refreshing):not(.refresh-once):not(.icon-pulse)) { transform: none; animation: mados-icon-greet 420ms var(--ui-ease) both; }
+/* Closing keeps its familiar cross shape; only a press changes its size. */
+button > .lucide-x { opacity: .8; transform: none; transform-origin: center; transition: opacity 150ms ease, transform 120ms ease; }
+button:is(:hover, :focus-visible):not(:disabled) > .lucide-x { opacity: 1; }
+button:active:not(:disabled) > .lucide-x { transform: scale(.9); }
 :is(.app-shell, .mados-dialog, .mados-action-menu) :is(button, summary):is(:hover, :focus-visible):not(:disabled) > :is(.lucide-settings, .lucide-refresh-cw, .lucide-rotate-cw):not(.spin):not(.icon-loading):not(.icon-refreshing):not(.refresh-once) { animation: gear-spin 700ms ease both; }
 :is(.app-shell, .mados-dialog, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > :is(.lucide-play, .lucide-arrow-right, .action-arrow) { animation: station-forward 480ms ease both; }
 :is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-external-link { animation: station-external 450ms ease both; }
@@ -178,7 +185,7 @@ button:focus-visible, [role="button"]:focus-visible, summary:focus-visible { out
 :is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > :is(.lucide-globe2, .lucide-clock3, .lucide-history) { animation: station-history 600ms ease both; }
 :is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > :is(.lucide-gamepad2, .lucide-server-cog) { animation: station-gamepad 600ms ease both; }
 :is(.app-shell, .mados-dialog, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-save:not(.icon-pulse) { animation: station-save 450ms ease both; }
-:is(.app-shell, .mados-dialog, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > :is(.lucide-x, .lucide-square) { animation: station-close 420ms ease both; }
+:is(.app-shell, .mados-dialog, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-square { animation: station-close 420ms ease both; }
 :is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-trash2 { animation: station-trash 450ms ease both; }
 :is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-folder-open { animation: station-map 500ms ease both; }
 :is(.app-shell, .mados-action-menu) button:is(:hover, :focus-visible):not(:disabled) > .lucide-star { animation: star-pop 500ms ease both; }

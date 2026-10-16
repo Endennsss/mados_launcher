@@ -1,0 +1,6 @@
+import { Check, PackageOpen, Play, SlidersHorizontal } from "lucide-react";
+export type ToolsStep = "build" | "config" | "run";
+export function ToolsJourney({step,hasBuild,hasConfig,dirty,running,onChange}:{step:ToolsStep;hasBuild:boolean;hasConfig:boolean;dirty:boolean;running:boolean;onChange:(step:ToolsStep)=>void}) {
+  const steps=[{id:"build",title:"Сборка",caption:hasBuild?"Установлена":"CDN или ZIP",icon:PackageOpen,complete:hasBuild},{id:"config",title:"Настройка",caption:dirty?"Есть изменения":hasConfig?"Конфигурация сохранена":"Имя, порт и правила",icon:SlidersHorizontal,complete:hasConfig&&!dirty},{id:"run",title:"Запуск",caption:running?"Сервер работает":"Ваша локальная станция",icon:Play,complete:running}] as const;
+  return <nav className="tools-journey" aria-label="Этапы локального сервера">{steps.map((item,index)=>{const Icon=item.icon;return <button key={item.id} data-tools-step={item.id} aria-current={step===item.id?"step":undefined} aria-controls={`tools-${item.id}-panel`} disabled={item.id!=="build"&&!hasBuild} onClick={()=>onChange(item.id)}><span className="journey-symbol"><Icon size={20}/>{item.complete&&<i><Check size={9}/></i>}</span><span><small>0{index+1}</small><strong>{item.title}</strong><span>{item.caption}</span></span></button>;})}</nav>;
+}

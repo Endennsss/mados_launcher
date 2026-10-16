@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     AlertTriangle,
+    Activity,
+    HardDrive,
     ArrowRight,
     Check,
     CheckCircle2,
@@ -33,12 +35,20 @@ import type {
     LocalServerSnapshot,
     LaunchProfile,
 } from "../contracts/launcher";
-import { LaunchProfiles } from "./LaunchProfiles";
+import { LaunchProfiles, type ProfileLoadState } from "./LaunchProfiles";
+import { ViewState } from "./ViewState";
 import type { LaunchProfileDraft } from "./launch-profiles";
 import { buildVariantLabel, configChanges as configChangesPreview, formatBuildSize, importStageLabel, isLocalProcessActive, localStatusLabels } from "./tools-ui";
 import { useConfirm } from "./ConfirmDialog";
 import { SelectField } from "./SelectField";
 import { ActionMenu } from "./ActionMenu";
+import { ToolsJourney, type ToolsStep } from "./ToolsJourney";
+import { LocalServerLogs } from "./LocalServerLogs";
+import { DiagnosticsView } from "./DiagnosticsView";
+import { PersonalBackupView } from "./PersonalBackupView";
+import { ReplayLibraryView } from "./ReplayLibraryView";
+import { Archive, Clapperboard } from "lucide-react";
+import { StorageView } from "./StorageView";
 
 function formatBackupDate(value: string): string {
     return new Date(value).toLocaleString(undefined, {
@@ -51,24 +61,43 @@ function formatBackupDate(value: string): string {
     });
 }
 export function ToolsView({
+    accountId,
+    diagnosticRequest,
+    autoDiagnose = false,
+    onDiagnosticStarted,
+    onDiagnosticLogin,
     onError,
     launchProfiles = [],
     launchProfilesBusy = false,
+    profileStatus,
     onUseLaunchProfile,
     onCreateLaunchProfile,
     onUpdateLaunchProfile,
     onRemoveLaunchProfile,
 }: {
+    accountId?: string;
+    diagnosticRequest?: {address:string;revision:number}|null;
+    autoDiagnose?: boolean;
+    onDiagnosticStarted?: ()=>void;
+    onDiagnosticLogin?:()=>void;
     onError: (message: string | null) => void;
     launchProfiles?: LaunchProfile[];
     launchProfilesBusy?: boolean;
+    profileStatus?: ProfileLoadState;
     onUseLaunchProfile?: (profile: LaunchProfile) => void | Promise<void>;
     onCreateLaunchProfile?: (draft: LaunchProfileDraft) => void | Promise<void>;
     onUpdateLaunchProfile?: (id: string, draft: LaunchProfileDraft) => void | Promise<void>;
     onRemoveLaunchProfile?: (profile: LaunchProfile) => void | Promise<void>;
 }) {
+    const [section,setSection]=useState<"server"|"diagnostics"|"storage"|"personal"|"replays">(diagnosticRequest?"diagnostics":"server");
+    useEffect(()=>{if(diagnosticRequest)setSection("diagnostics")},[diagnosticRequest]);
     const [profiles, setProfiles] = useState<LocalServerProfile[]>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [step, setStep] = useState<ToolsStep>("build");
+    const initialStep = useRef(false), focusStep = useRef(false);
+    const [detailsLoading, setDetailsLoading] = useState(false), [detailsError, setDetailsError] = useState<string|null>(null), [detailsRetry, setDetailsRetry] = useState(0);
+    const goStep = (next:ToolsStep, focus=true) => { focusStep.current=focus; setStep(next); };
+    useEffect(()=>{if(focusStep.current){focusStep.current=false;document.querySelector<HTMLElement>(`#tools-${step}-panel h2`)?.focus({preventScroll:true});}},[step]);
     const confirm = useConfirm(selectedId);
     const [sourceUrl, setSourceUrl] = useState("");
     const [profileName, setProfileName] = useState("");
@@ -123,7 +152,8 @@ export function ToolsView({
     const reload = useCallback(async () => {
         try {
             const next = await window.mados.localServers.list();
-            setProfiles(Array.isArray(next) ? next : []);
+            setProfiles(Array.isArray(next) ? next : []); if(!next.length)setStep("build");
+            if(!initialStep.current){initialStep.current=true;setStep(next.length?"run":"build");}
             setSelectedId((current) =>
                 current && next.some((item) => item.id === current)
                     ? current
@@ -145,30 +175,35 @@ export function ToolsView({
         setBackups([]);
         setPortNotice(null);
         setAdvanced(false);
+        setDetailsError(null);
+        setDetailsLoading(!!selectedId);
         if (!selectedId) {
             return;
         }
         let cancelled = false;
-        void Promise.all([
-            window.mados.localServers.getStatus(selectedId),
-            window.mados.localServers.getConfig(selectedId),
-            window.mados.localServers.backups(selectedId),
-        ])
-            .then(([nextSnapshot, nextConfig, nextBackups]) => {
+        const showLoadError = (caught: unknown) => {
+            if (!cancelled) setDetailsError((previous) => [previous, (caught as Error).message].filter(Boolean).join(" · "));
+        };
+        // Process controls remain available even when configuration or backups cannot be read.
+        void window.mados.localServers.getStatus(selectedId)
+            .then((next) => { if (!cancelled) setSnapshot(next); })
+            .catch(showLoadError);
+        void window.mados.localServers.getConfig(selectedId)
+            .then((nextConfig) => {
                 if (cancelled) return;
-                setSnapshot(nextSnapshot);
                 setConfig(nextConfig);
                 setConfigBaseline(nextConfig);
                 setConfigMode("fields");
-                setBackups(nextBackups);
             })
-            .catch((caught) => {
-                if (!cancelled) onError((caught as Error).message);
-            });
+            .catch(showLoadError)
+            .finally(() => { if (!cancelled) setDetailsLoading(false); });
+        void window.mados.localServers.backups(selectedId)
+            .then((next) => { if (!cancelled) setBackups(next); })
+            .catch(showLoadError);
         return () => {
             cancelled = true;
         };
-    }, [selectedId, onError]);
+    }, [selectedId, onError, detailsRetry]);
 
     useEffect(
         () =>
@@ -262,8 +297,14 @@ export function ToolsView({
             onError("Сначала проверьте CDN-ссылку или выберите ZIP.");
             return;
         }
+        if (dirty || updateTarget) {
+            const message = [
+                dirty ? "Несохранённые изменения конфигурации будут сброшены после успешной установки." : null,
+                updateTarget ? `Обновить «${updateTarget.name}»? Сервер будет остановлен. Данные и конфигурация с диска сохранятся в резервной копии.` : null,
+            ].filter(Boolean).join(" ");
+            if (!await confirm({title: updateTarget ? "Обновить сборку?" : "Установить новую сборку?", message, confirmLabel: "Продолжить установку"})) return;
+        }
         const importId = crypto.randomUUID();
-        if (updateTarget && !await confirm(`Обновить «${updateTarget.name}»? Сервер будет остановлен. Данные и конфигурация сохранятся в резервной копии.`)) return;
         currentOperation.current = importId;
         cancelledOperation.current = null;
         setBusy("import");
@@ -287,7 +328,11 @@ export function ToolsView({
                   };
             const result = await window.mados.tools.cdnImport(request);
             await reload();
-            if (result.profile?.id) setSelectedId(result.profile.id);
+            if (result.profile?.id) {
+                setSelectedId(result.profile.id);
+                setDetailsRetry((value) => value + 1);
+            }
+            goStep("config");
             setArchivePath(null);
             setInspection(null);
             setSourceUrl("");
@@ -318,6 +363,7 @@ export function ToolsView({
 
     const runAction = async (action: "start" | "stop" | "restart") => {
         if (!selected) return;
+        if(action!=="stop"&&config&&configBaseline&&configChangesPreview(configBaseline,config,configMode).length){goStep("config");return;}
         if (
             action === "stop" &&
             !await confirm("Остановить локальный сервер?")
@@ -353,7 +399,9 @@ export function ToolsView({
               setConfig(saved);
               setConfigBaseline(saved);
               setPortNotice("Конфигурация сохранена");
-              setBackups(await window.mados.localServers.backups(id));
+              goStep("run");
+              const nextBackups=await window.mados.localServers.backups(id);
+              if(currentSelection.current===id)setBackups(nextBackups);
             }
             await reload();
         } catch (caught) {
@@ -364,6 +412,17 @@ export function ToolsView({
     };
 
     const status = snapshot?.status ?? "idle";
+    const dirty = !!(config && configBaseline && configChangesPreview(configBaseline, config, configMode).length);
+    const chooseProfile=async(id:string)=>{
+        if(id===selectedId||busy)return;
+        if(dirty&&!await confirm({title:"Сменить сборку?",message:"Несохранённые изменения конфигурации будут сброшены.",confirmLabel:"Сменить сборку"}))return;
+        setSelectedId(id);goStep("run");
+    };
+    const retryDetails = async () => {
+        if (busy) return;
+        if (dirty && !await confirm({title:"Загрузить данные заново?", message:"Несохранённые изменения конфигурации будут сброшены.", confirmLabel:"Загрузить заново"})) return;
+        setDetailsRetry(value => value + 1);
+    };
     const statusLabel = localStatusLabels;
     const readyToImport = Boolean(archivePath || selectedBuildId);
     const processTransition = pendingAction !== null || ["starting", "stopping", "downloading", "extracting"].includes(status);
@@ -386,11 +445,10 @@ export function ToolsView({
         <section className="page page-enter tools-page">
             <div className="page-heading">
                 <div>
-                    <p className="eyebrow">Ваша станция</p>
+                    <p className="eyebrow">Ваш центр управления</p>
                     <h1>Инструменты</h1>
                     <p className="page-subtitle">
-                        Установите сервер из CDN или ZIP и управляйте им прямо
-                        из лаунчера.
+                        Подключение, свободное место и ваша локальная станция.
                     </p>
                 </div>
                 <button
@@ -405,14 +463,23 @@ export function ToolsView({
                     />
                 </button>
             </div>
-            <div className="tools-grid">
-                <section className="tool-card tool-import-card" ref={importRef}>
+            <nav className="maintenance-tabs" aria-label="Разделы инструментов">{([{id:"server",label:"Локальный сервер",icon:ServerCog},{id:"diagnostics",label:"Диагностика",icon:Activity},{id:"storage",label:"Хранилище",icon:HardDrive},{id:"personal",label:"Мой Mados",icon:Archive},{id:"replays",label:"Реплеи",icon:Clapperboard}] as const).map(item=><button key={item.id} aria-current={section===item.id?"page":undefined} data-maintenance-tab={item.id} onClick={()=>setSection(item.id)}><item.icon size={18}/>{item.label}</button>)}</nav>
+            <div hidden={section!=="diagnostics"}><DiagnosticsView key={diagnosticRequest?.revision??0} initialAddress={diagnosticRequest?.address} autoRun={autoDiagnose} onAutoRun={onDiagnosticStarted} onStorage={()=>setSection("storage")} onLogin={onDiagnosticLogin}/></div>
+            {section==="storage"&&<StorageView/>}
+            {section==="personal"&&<PersonalBackupView key={accountId} accountId={accountId}/>}
+            {section==="replays"&&<ReplayLibraryView key={accountId} accountId={accountId}/>}
+            <div className="local-tools-section" hidden={section!=="server"}>
+            {profiles.length>0&&<div className="tools-profile-picker"><div><span className="eyebrow">Локальная сборка</span><SelectField label="Активная локальная сборка" value={selectedId??""} options={profiles.map(profile=>({value:profile.id,label:profile.name}))} onChange={id=>void chooseProfile(id)} disabled={busy!==null}/></div><span className="tools-profile-version">{selected?.version??"Версия не указана"}{selected?.platform?` · ${selected.platform} ${selected.architecture}`:""}</span><button className="secondary-button compact-button" disabled={busy!==null} onClick={()=>{setUpdateTargetId(null);goStep("build");}}><PackageOpen size={15}/>Добавить сборку</button></div>}
+            <ToolsJourney step={step} hasBuild={!!selected} hasConfig={!!configBaseline} dirty={dirty} running={status==="running"} onChange={next=>goStep(next,false)}/>
+            {detailsError&&<ViewState compact kind="error" title="Данные сборки недоступны" description={detailsError} action="Повторить" onAction={()=>void retryDetails()}/>}
+            <div className="tools-grid tools-workspace">
+                <section className="tool-card tool-import-card" ref={importRef} id="tools-build-panel" hidden={step!=="build"}>
                     <div className="tool-card-head">
                         <span className="tool-card-icon">
                             <Download size={19} />
                         </span>
                         <div>
-                            <h2>
+                            <h2 tabIndex={-1}>
                                 {updateTarget
                                     ? "Обновить сборку"
                                     : "Добавить сборку"}
@@ -568,13 +635,13 @@ export function ToolsView({
                         )}
                     </div>
                 </section>
-                <section className="tool-card tool-server-card">
+                <section className="tool-card tool-server-card" id="tools-run-panel" hidden={step!=="run"}>
                     <div className="tool-card-head">
                         <span className="tool-card-icon">
                             <ServerCog size={19} />
                         </span>
                         <div>
-                            <h2>Локальный сервер</h2>
+                            <h2 tabIndex={-1}>Управление сервером</h2>
                             <p>
                                 По умолчанию доступен только на этом компьютере.
                             </p>
@@ -585,41 +652,12 @@ export function ToolsView({
                         </span>
                     </div>
                     {profiles.length === 0 ? (
-                        <div className="tool-empty">
-                            <PackageOpen size={22} />
-                            <strong>Сборок пока нет</strong>
-                            <span>Добавьте CDN-ссылку или ZIP выше.</span>
-                        </div>
+                        <ViewState icon={<PackageOpen size={25}/>} title="Сборок пока нет" description="Добавьте CDN-ссылку или ZIP выше."/>
                     ) : (
                         <>
-                            <div className="local-profile-list">
-                                {profiles.map((profile) => (
-                                    <button
-                                        type="button"
-                                        className={`local-profile-item ${selectedId === profile.id ? "selected" : ""}`}
-                                        disabled={busy !== null}
-                                        key={profile.id}
-                                        onClick={() =>
-                                            setSelectedId(profile.id)
-                                        }
-                                    >
-                                        <span className="local-profile-icon">
-                                            <ServerCog size={16} />
-                                        </span>
-                                        <span>
-                                            <strong>{profile.name}</strong>
-                                            <small>
-                                                {profile.version ??
-                                                    "Версия не указана"}{" "}
-                                                · {profile.port}
-                                            </small>
-                                        </span>
-                                        <ArrowRight size={15} />
-                                    </button>
-                                ))}
-                            </div>
                             {selected && (
                                 <div className="local-server-controls">
+                                    <div className={`local-server-overview ${status}`}><span className="local-server-emblem" key={status}><ServerCog size={34} strokeWidth={1.5}/></span><div><span className="eyebrow">{status==="running"?"Станция работает":status==="starting"?"Подготавливаем станцию":"Ваша локальная станция"}</span><h3>{selected.name}</h3><p>{status==="running"?"Готовность подтверждена сервером. Можно подключаться из профиля запуска.":status==="starting"?"Ожидаем готовность процесса и ответ /status.":status==="stopping"?"Ожидаем завершения процесса. Журнал продолжает обновляться.":status==="error"?snapshot?.lastError||"Запуск не завершён. Подробности доступны в логах.":"Сборка установлена. Проверьте параметры и начните свою смену."}</p></div></div>
                                     <div className="local-server-meta">
                                         <span>
                                             {selected.bindAddress}:
@@ -630,15 +668,16 @@ export function ToolsView({
                                         )}
                                     </div>
                                     <div className="tool-inline-actions local-server-actions">
-                                        <button className="primary-button local-server-primary" disabled={busy !== null || processTransition} onClick={() => void runAction(status === "running" ? "stop" : "start")}>
+                                        <button className="primary-button local-server-primary" disabled={busy !== null || processTransition || status!=="running"&&(dirty||detailsLoading||!config)} onClick={() => void runAction(status === "running" ? "stop" : "start")}>
                                             {processTransition ? <LoaderCircle size={16} className="spin" /> : status === "running" ? <Square size={16} /> : <Play size={16} fill="currentColor" />}
                                             {processActionLabel}
                                         </button>
-                                        {status === "running" && <button className="secondary-button" disabled={busy !== null} onClick={() => void runAction("restart")}><RotateCw size={15} />Перезапустить</button>}
+                                        {status === "running" && <button className="secondary-button" disabled={busy !== null||dirty} onClick={() => void runAction("restart")}><RotateCw size={15} />Перезапустить</button>}
+                                        <button className="secondary-button" disabled={busy!==null} onClick={()=>goStep("config")}><Settings size={15}/>Настроить</button>
                                         <ActionMenu key={selected.id} label="Действия сервера" disabled={busy !== null} onError={onError} items={[
                                             {id:"update",label:"Обновить сборку",icon:<Download size={16} />,disabled:processTransition,onSelect:() => {
                                                 setUpdateTargetId(selected.id);
-                                                importRef.current?.scrollIntoView({behavior:document.documentElement.classList.contains("reduce-motion") || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",block:"start"});
+                                                goStep("build");
                                             }},
                                             {id:"port",label:"Проверить порт",icon:<ShieldCheck size={16} />,onSelect:async() => {
                                                 const result = await window.mados.localServers.testPort(selected.port, selected.bindAddress);
@@ -655,6 +694,7 @@ export function ToolsView({
                                             }},
                                         ]} />
                                     </div>
+                                    {dirty&&<div className="tools-draft-notice" role="status"><AlertTriangle size={16}/><span>Несохранённые изменения. Сохраните настройки перед запуском.</span><button className="text-link" onClick={()=>goStep("config")}>К настройкам<ArrowRight size={14}/></button></div>}
                                     {portNotice && (
                                         <div className="tool-config-note">
                                             <CheckCircle2 size={14} />
@@ -666,30 +706,36 @@ export function ToolsView({
                         </>
                     )}
                 </section>{" "}
-                <section className="tool-card tool-config-card">
+                <section className="tool-card tool-config-card" id="tools-config-panel" hidden={step!=="config"}>
                     <div className="tool-card-head">
                         <span className="tool-card-icon">
                             <Settings size={19} />
                         </span>
                         <div>
-                            <h2>Настройка сервера</h2>
+                            <h2 tabIndex={-1}>Настройка сервера</h2>
                             <p>Основные поля сохраняются с резервной копией.</p>
                         </div>
                         <button
                             className="icon-button"
-                            disabled={!selected}
+                            disabled={!selected||busy!==null||detailsLoading}
                             onClick={() => {
-                                if (selected)
+                                if (selected) {
+                                    if(dirty){setConfigError("Сначала сохраните изменения или переключите редактор, чтобы сбросить их.");return;}
+                                    const id = selected.id;
+                                    setBusy("config");
                                     void window.mados.localServers
-                                        .getConfig(selected.id)
+                                        .getConfig(id)
                                         .then((next) => {
+                                            if (currentSelection.current !== id) return;
                                             setConfig(next);
                                             setConfigBaseline(next);
                                             setConfigMode("fields");
                                         })
                                         .catch((caught) =>
                                             onError((caught as Error).message),
-                                        );
+                                        )
+                                        .finally(() => setBusy(null));
+                                }
                             }}
                             aria-label="Обновить конфигурацию"
                         >
@@ -697,19 +743,13 @@ export function ToolsView({
                         </button>
                     </div>
                     {!selected || !config ? (
-                        <div className="tool-empty">
-                            <Settings size={22} />
-                            <span>
-                                Выберите установленную сборку, чтобы настроить
-                                её.
-                            </span>
-                        </div>
+                        <ViewState kind={detailsLoading?"loading":"empty"} icon={detailsLoading?<LoaderCircle className="spin" size={22}/>:<Settings size={25}/>} title={detailsLoading?"Загружаем настройки":"Настройте свою станцию"} description={detailsLoading?"Читаем конфигурацию выбранной сборки.":"Выберите установленную сборку, чтобы настроить её."}/>
                     ) : (
                         <div className="tool-config-form">
                             <div className="tool-form-grid">
                                 <label>
                                     Имя сервера
-                                    <input
+                                    <input disabled={busy!==null||isLocalProcessActive(status)}
                                         value={config.name ?? ""}
                                         onChange={(event) => {
                                             setConfigMode("fields");
@@ -722,7 +762,7 @@ export function ToolsView({
                                 </label>
                                 <label>
                                     Hostname
-                                    <input
+                                    <input disabled={busy!==null||isLocalProcessActive(status)}
                                         value={config.hostname ?? ""}
                                         onChange={(event) => {
                                             setConfigMode("fields");
@@ -735,7 +775,7 @@ export function ToolsView({
                                 </label>
                                 <label>
                                     Порт
-                                    <input
+                                    <input disabled={busy!==null||isLocalProcessActive(status)}
                                         type="number"
                                         min={1}
                                         max={65535}
@@ -754,7 +794,7 @@ export function ToolsView({
                                 </label>
                                 <label>
                                     Лимит игроков
-                                    <input
+                                    <input disabled={busy!==null||isLocalProcessActive(status)}
                                         type="number"
                                         min={1}
                                         value={config.maxPlayers ?? ""}
@@ -771,7 +811,7 @@ export function ToolsView({
                                 </label>
                                 <label>
                                     Режим авторизации
-                                    <input
+                                    <input disabled={busy!==null||isLocalProcessActive(status)}
                                         value={config.authMode ?? ""}
                                         onChange={(event) => {
                                             setConfigMode("fields");
@@ -787,6 +827,7 @@ export function ToolsView({
                                 <ShieldCheck size={14} /> Bind по умолчанию:{" "}
                                 {config.bindAddress || "127.0.0.1"}
                             </div>
+                            {isLocalProcessActive(status)&&<div className="tool-config-note"><AlertTriangle size={14}/>Остановите сервер перед изменением его настроек.</div>}
                             {configBaseline &&
                                 configChangesPreview(
                                     configBaseline,
@@ -822,7 +863,7 @@ export function ToolsView({
                                 </summary>
                                 <label>
                                     server_config.toml
-                                    <textarea
+                                    <textarea disabled={busy!==null||isLocalProcessActive(status)}
                                         value={config.rawToml}
                                         onChange={(event) => {
                                             setConfigMode("raw");
@@ -846,11 +887,12 @@ export function ToolsView({
                             <div className="tool-inline-actions">
                                 <button
                                     className="primary-button"
+                                    data-action="save-config-next"
                                     disabled={
-                                        busy === "config" ||
+                                        busy !== null || dirty&&isLocalProcessActive(status) ||
                                         Boolean(rawTomlError)
                                     }
-                                    onClick={() => void saveConfig()}
+                                    onClick={() => dirty ? void saveConfig() : goStep("run")}
                                 >
                                     <Save
                                         size={16}
@@ -860,7 +902,7 @@ export function ToolsView({
                                                 : ""
                                         }
                                     />
-                                    Сохранить конфигурацию
+                                    {dirty?"Сохранить и к запуску":"К запуску"}<ArrowRight size={15}/>
                                 </button>
                                 {backups.length > 0 && (
                                     <SelectField label="Резервная копия" placeholder="Восстановить копию…" value=""
@@ -880,69 +922,11 @@ export function ToolsView({
                         </div>
                     )}
                 </section>{" "}
-                <section className="tool-card tool-log-card">
-                    <div className="tool-card-head">
-                        <span className="tool-card-icon">
-                            <Terminal size={19} />
-                        </span>
-                        <div>
-                            <h2>Live-логи</h2>
-                            <p>
-                                {selected
-                                    ? `Последние сообщения ${selected.name}`
-                                    : "Выберите сервер, чтобы увидеть логи."}
-                            </p>
-                        </div>
-                        <div className="tool-log-actions">
-                            <button
-                                className="icon-button"
-                                disabled={logs.length === 0}
-                                onClick={() =>
-                                    void window.mados.localServers.saveLog(
-                                        selected?.id ?? "",
-                                    )
-                                }
-                                aria-label="Сохранить лог"
-                                data-tooltip="Сохранить лог"
-                            >
-                                <Save size={15} />
-                            </button>
-                            <button
-                                className="icon-button"
-                                disabled={logs.length === 0}
-                                onClick={() => { if (selectedId) setLogsByProfile((items) => ({ ...items, [selectedId]: [] })); }}
-                                aria-label="Очистить логи"
-                                data-tooltip="Очистить"
-                            >
-                                <Trash2 size={15} />
-                            </button>
-                        </div>
-                    </div>
-                    <div className="tool-log-view" aria-live="polite">
-                        {logs.length === 0 ? (
-                            <span className="tool-log-empty">
-                                Ожидание запуска…
-                            </span>
-                        ) : (
-                            logs.map((line, index) => (
-                                <div
-                                    className={`tool-log-line ${line.stream === "stderr" ? "stderr" : ""}`}
-                                    key={`${line.timestamp}-${index}`}
-                                >
-                                    <time>
-                                        {new Date(
-                                            line.timestamp,
-                                        ).toLocaleTimeString()}
-                                    </time>
-                                    <span>{line.line}</span>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </section>
+                <div hidden={step!=="run"}><LocalServerLogs profileId={selectedId} name={selected?.name??null} lines={logs} onSave={()=>window.mados.localServers.saveLog(selectedId??"")} onClear={()=>{if(selectedId)setLogsByProfile(items=>({...items,[selectedId]:[]}));}}/></div>
             </div>
             {onUseLaunchProfile && onCreateLaunchProfile && onUpdateLaunchProfile && onRemoveLaunchProfile && (
                 <LaunchProfiles
+                    {...profileStatus}
                     profiles={launchProfiles}
                     busy={launchProfilesBusy}
                     onUse={onUseLaunchProfile}
@@ -951,6 +935,7 @@ export function ToolsView({
                     onRemove={onRemoveLaunchProfile}
                 />
             )}
+            </div>
         </section>
     );
 }

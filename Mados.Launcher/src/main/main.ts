@@ -11,6 +11,8 @@ import { containsDeepLink } from "./deep-link";
 import { WorkerClient } from "./worker-client";
 import { GitHubWindowsUpdateProvider } from "./github-update-provider";
 import { LauncherUpdates } from "./launcher-updates";
+import {GameWindowPolicy,type GameWindowOptions} from './game-window';
+import {ToolkitIpc} from './toolkit-ipc';
 
 const WINDOWS_APP_USER_MODEL_ID = "com.mados.launcher";
 if (process.platform === "win32") app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
@@ -26,6 +28,9 @@ let connectionActive = false;
 const approvedLocalServerArchives = new Set<string>();
 let startupState: StartupState = { stage: "starting-worker", message: "Запускаем Mados Launcher…" };
 const worker = new WorkerClient();
+let toolkit:ToolkitIpc;
+const gameWindowPolicy=new GameWindowPolicy();
+let gameWindowOptions:GameWindowOptions={minimizeOnPlay:false,restoreAfterPlay:false};
 const discordPresence = new DiscordPresenceService((status) => {
   sendToRenderer("discord-status", { status });
 });
@@ -160,10 +165,10 @@ function isActiveLocalServerStatus(value: unknown): boolean {
   return result.success && (["running", "starting", "stopping"].includes(result.data.status) || result.data.pid !== null);
 }
 
-function requestShutdown(installUpdate = false): void {
+function requestShutdown(installUpdate = false, restart = false): void {
   if (shutdownRequest || shutdownComplete) return;
   closePromptActive = true;
-  shutdownRequest = performShutdown(installUpdate).catch((error) => {
+  shutdownRequest = performShutdown(installUpdate,restart).catch((error) => {
     console.error("[mados] Shutdown failed", error);
     shuttingDown = false;
     sendToRenderer("launcher-error", { message: "Не удалось корректно завершить работу. Повторите закрытие." });
@@ -173,7 +178,7 @@ function requestShutdown(installUpdate = false): void {
   });
 }
 
-async function performShutdown(installUpdate: boolean): Promise<void> {
+async function performShutdown(installUpdate: boolean,restart=false): Promise<void> {
   if (installUpdate && !launcherUpdates.canInstall()) return;
   if (installUpdate && connectionActive) {
     sendToRenderer("launcher-error", { message: "Завершите игру или подключение перед установкой обновления Mados." });
@@ -218,7 +223,7 @@ async function performShutdown(installUpdate: boolean): Promise<void> {
   }
   shutdownComplete = true;
   if (installUpdate && app.isPackaged) launcherUpdates.install();
-  else { launcherUpdates.stop(); app.quit(); }
+  else { launcherUpdates.stop(); if(restart)app.relaunch(); app.quit(); }
 }
 
 async function withDeadline<T>(operation: Promise<T>, milliseconds: number): Promise<T> {
@@ -232,12 +237,12 @@ async function withDeadline<T>(operation: Promise<T>, milliseconds: number): Pro
   }
 }
 
-async function resolveLocalServerPath(method: "localServers.openFolder" | "localServers.openLog", params: unknown): Promise<string> {
+async function resolveLocalServerPath(method: "localServers.openFolder" | "localServers.openLog" | "diagnostics.openLogs", params: unknown): Promise<string> {
   const result = await worker.invoke<{ path?: unknown }>(method, params);
   if (typeof result.path !== "string" || !isAbsolute(result.path)) throw new Error("Локальный путь недоступен.");
   const path = await realpath(result.path);
   const info = await stat(path);
-  if (method === "localServers.openFolder" ? !info.isDirectory() : !info.isFile() || !/\.(?:log|txt)$/i.test(path)) {
+  if (method !== "localServers.openLog" ? !info.isDirectory() : !info.isFile() || !/\.(?:log|txt)$/i.test(path)) {
     throw new Error("Локальный файл или папка недоступны.");
   }
   return path;
@@ -257,6 +262,7 @@ function forwardDeepLink(commandLine: string[]): void {
 }
 
 async function start(): Promise<void> {
+  toolkit=new ToolkitIpc(worker,()=>windowRef,app.getPath('userData'));
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
     app.quit();
@@ -286,6 +292,14 @@ async function start(): Promise<void> {
   }
 
   worker.on("event", (event) => {
+    if((event.event==='app.ready'||event.event==='settings.changed')&&event.data?.window){gameWindowOptions={minimizeOnPlay:event.data.window.minimizeOnPlay===true,restoreAfterPlay:event.data.window.restoreAfterPlay===true};}
+    if(event.event.startsWith('connection.')&&typeof event.data?.status==='string'){
+      const action=gameWindowPolicy.update(event.data.status,gameWindowOptions);
+      if(!shuttingDown&&windowRef&&!windowRef.isDestroyed()){
+        if(action==='minimize')windowRef.minimize();
+        if(action==='restore'){if(windowRef.isMinimized())windowRef.restore();windowRef.show();windowRef.focus();}
+      }
+    }
     if (event.event.startsWith("connection.") && typeof event.data?.status === "string") {
       connectionActive = !["ClientExited", "Cancelled", "ConnectionFailed", "UpdateError", "NotAContentBundle", "Error"].includes(event.data.status);
     }
@@ -356,6 +370,12 @@ ipcMain.handle("worker-invoke", async (event, method: unknown, params?: unknown)
     throw new Error(error instanceof Error ? error.message : "Invalid launcher parameters");
   }
   let approvedArchivePath: string | undefined;
+  if(parsed.data.method==='app.restart'){
+    if(connectionActive||isActiveLocalServerStatus(localServerState))throw new Error('Завершите игру и локальный сервер перед перезапуском.');
+    requestShutdown(false,true);return {requested:true};
+  }
+  const nativeResult=await toolkit.handle(parsed.data.method,(safeParams??{}) as Record<string,unknown>);
+  if(nativeResult.handled)return nativeResult.result;
   if ((parsed.data.method === "tools.cdn.import" || parsed.data.method === "localServers.create") && safeParams && typeof safeParams === "object" && "localPath" in safeParams) {
     const localPath = (safeParams as { localPath?: unknown }).localPath;
     if (typeof localPath !== "string" || !approvedLocalServerArchives.has(resolve(localPath))) {
@@ -367,7 +387,7 @@ ipcMain.handle("worker-invoke", async (event, method: unknown, params?: unknown)
     requestShutdown();
     return { requested: true };
   }
-  if (parsed.data.method === "localServers.openFolder" || parsed.data.method === "localServers.openLog") {
+  if (parsed.data.method === "localServers.openFolder" || parsed.data.method === "localServers.openLog" || parsed.data.method === "diagnostics.openLogs") {
     const path = await resolveLocalServerPath(parsed.data.method, safeParams);
     const error = await shell.openPath(path);
     if (error) throw new Error("Не удалось открыть выбранный файл или папку.");
@@ -407,6 +427,10 @@ ipcMain.handle("pick-content-bundle", async (event) => {
     filters: [{ name: "Replay or content bundle", extensions: ["zip"] }],
   });
   return result.canceled ? null : result.filePaths[0] ?? null;
+});
+ipcMain.handle('replay-file-drop',async(event,path:unknown)=>{
+  if(!trustedSender(event)||typeof path!=='string'||!path||path.length>32768)throw new Error('Недоступный ZIP-файл.');
+  return toolkit.addDroppedReplay(path);
 });
 ipcMain.handle("pick-local-server-archive", async (event) => {
   if (!trustedSender(event) || !windowRef) throw new Error("Untrusted renderer");

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
+using Microsoft.Data.Sqlite;
 using SS14.Launcher.Worker;
 
 #nullable enable
@@ -62,7 +63,10 @@ public sealed class LauncherInsightsStoreTests
         Assert.That(first.Notification, Is.Null);
         Assert.That(offline.Notification, Is.Null);
         Assert.That(online.Notification?.Kind, Is.EqualTo("favorite-online"));
+        Assert.That(online.Notification?.Address, Is.EqualTo("ss14://server.example"));
+        Assert.That(online.Notification?.AccountId, Is.EqualTo(account));
         Assert.That(store.ListNotifications(account), Has.Count.EqualTo(1));
+        Assert.That(NewStore().ListNotifications(account).Single().Address, Is.EqualTo("ss14://server.example"));
     }
 
     [Test]
@@ -132,4 +136,24 @@ public sealed class LauncherInsightsStoreTests
     }
 
     private LauncherInsightsStore NewStore() => new(Path.Combine(_directory, "launcher-insights.db"));
+
+    [Test]
+    public void OldNotificationDatabaseUpgradesWithoutLosingHistory()
+    {
+        var account = Guid.NewGuid();
+        var path = Path.Combine(_directory, "launcher-insights.db");
+        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "CREATE TABLE NotificationEvent(Id TEXT PRIMARY KEY, AccountId TEXT, Kind TEXT NOT NULL, Title TEXT NOT NULL, Message TEXT NOT NULL, CreatedAtUtc TEXT NOT NULL, ReadAtUtc TEXT); INSERT INTO NotificationEvent VALUES ('old', $account, 'favorite-online', 'Online', 'Old station', '2026-10-15T12:00:00Z', NULL);";
+            command.Parameters.AddWithValue("$account", account.ToString());
+            command.ExecuteNonQuery();
+        }
+        var migrated = NewStore().ListNotifications(account).Single();
+        Assert.That(migrated.Id, Is.EqualTo("old"));
+        Assert.That(migrated.Address, Is.Null);
+        Assert.That(migrated.AccountId, Is.EqualTo(account));
+        Assert.That(NewStore().ListNotifications(account).Single().Message, Is.EqualTo("Old station"));
+    }
 }
