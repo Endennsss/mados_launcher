@@ -15,7 +15,7 @@ namespace SS14.Launcher.Models.ServerStatus;
 /// <summary>
 /// A status response enriched with the round-trip time measured for this
 /// particular server. The launcher never infers map or mode from a server
-/// name; those values must be explicit status tags.
+/// name; those values come from public map/preset fields or explicit tags.
 /// </summary>
 public sealed record ServerStatusSnapshot(
     string? Name,
@@ -41,9 +41,12 @@ public sealed record ServerStatusSnapshot(
             tags,
             pingMs,
             FindTagValue(tags, "lang:"),
-            FindTagValue(tags, "map:"),
-            FindTagValue(tags, "mode:"));
+            NonBlank(status.Map) ?? FindTagValue(tags, "map:"),
+            NonBlank(status.Preset) ?? FindTagValue(tags, "mode:"));
     }
+
+    private static string? NonBlank(JsonElement value)
+        => value.ValueKind == JsonValueKind.String && value.GetString()?.Trim() is { Length: > 0 } text ? text : null;
 
     public static string? FindTagValue(IEnumerable<string> tags, string prefix)
     {

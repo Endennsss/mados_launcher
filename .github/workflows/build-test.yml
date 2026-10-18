@@ -75,6 +75,8 @@ jobs:
     - name: Package Windows Debug build
       shell: pwsh
       run: npx electron-builder --dir --win --x64 --config.directories.output=../artifacts/ci-win
+    - name: Verify UTF-8 worker IPC and public server metadata
+      run: node tools/smoke-worker-unicode.mjs staging/worker/win-x64/Mados.Worker.exe
     - uses: actions/upload-artifact@v4
       with:
         name: mados-launcher-windows-debug

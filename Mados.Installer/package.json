@@ -1,6 +1,6 @@
 {
   "name": "mados-installer",
-  "version": "0.42.0",
+  "version": "0.42.1",
   "description": "Bootstrap installer for Mados Launcher",
   "private": true,
   "main": "dist/main/main.js",

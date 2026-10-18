@@ -61,7 +61,7 @@ const deadline = setTimeout(() => child.kill(), 45000);
 const slowServer = createServer((request, response) => {
   setTimeout(() => {
     response.setHeader("Content-Type", "application/json");
-    response.end(JSON.stringify(request.url.startsWith("/api/")
+    response.end(JSON.stringify(request.url.startsWith("/api/") || request.url === "/info"
       ? { desc: "Smoke server", links: [] }
       : { name: "Smoke server", players: 1, soft_max_players: 10, tags: [] }));
   }, 1200).unref();

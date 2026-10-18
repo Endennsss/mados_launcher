@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading.Tasks;
 using Serilog;
 using Splat;
@@ -22,6 +23,10 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        // Electron's pipes are UTF-8, regardless of the Windows console/ANSI
+        // code page. Set this before capturing Console.Out or reading any RPC.
+        Console.InputEncoding = new UTF8Encoding(false);
+        Console.OutputEncoding = new UTF8Encoding(false);
         // stdout belongs exclusively to the versioned protocol, including before
         // initialization. Libraries and diagnostics must never corrupt that stream.
         var protocol = Console.Out;

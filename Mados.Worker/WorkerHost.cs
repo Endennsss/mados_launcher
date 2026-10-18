@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Json;
 using System.Text.RegularExpressions;
 using System.Text;
 using System.Text.Json;
@@ -644,7 +645,11 @@ public sealed partial class WorkerHost
 
     private async Task<object> GetServerInfoAsync(JsonElement parameters)
     {
+        var accountId = _login.ActiveAccountId;
         var address = RequiredString(parameters, "address");
+        var safeAddress = PresenceAddress.Sanitize(address);
+        if (safeAddress == null || !UriHelper.TryParseSs14Uri(safeAddress, out var parsedAddress))
+            throw new WorkerRpcException(new WorkerError("INVALID_PARAMS", "Invalid server address"));
         var hubAddress = OptionalString(parameters, "hubAddress");
         if (string.IsNullOrWhiteSpace(hubAddress))
             hubAddress = ConfigConstants.DefaultHubUrls.FirstOrDefault()?.Urls.FirstOrDefault();
@@ -658,15 +663,34 @@ public sealed partial class WorkerHost
         {
             using var cancel = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token);
             cancel.CancelAfter(TimeSpan.FromSeconds(10));
-            var infoTask = _hub.GetServerInfo(address, hubAddress, cancel.Token);
-            var statusTask = ServerStatusProbe.FetchAsync(_http, address, cancel.Token);
+            var infoTask = GetServerDescriptionAsync(parsedAddress, hubAddress, cancel.Token);
+            var statusTask = ServerStatusProbe.FetchAsync(_http, safeAddress, cancel.Token);
             await Task.WhenAll(infoTask, statusTask);
             var info = await infoTask;
             var status = await statusTask;
+            if (info == null && status == null)
+                throw new WorkerRpcException(new WorkerError("SERVER_INFO_UNAVAILABLE", "Server description and status could not be loaded"));
+            if (status != null)
+            {
+                UpdateServerSnapshot(safeAddress, status);
+                if (accountId is { } currentAccount && currentAccount != Guid.Empty)
+                {
+                    try
+                    {
+                        if (_recentConnections.RefreshName(currentAccount, safeAddress, status.Name))
+                            SendEvent("recentConnections.updated", new { accountId = currentAccount });
+                    }
+                    catch (Exception error)
+                    {
+                        // A metadata write must not discard a successful live status.
+                        Log.Warning(error, "Could not refresh the recent server name");
+                    }
+                }
+            }
             return new
             {
-                description = info.Desc,
-                links = info.Links?.Select(link => new { name = link.Name, icon = link.Icon, url = link.Url }).ToArray()
+                description = info?.Desc,
+                links = info?.Links?.Select(link => new { name = link.Name, icon = link.Icon, url = link.Url }).ToArray()
                          ?? Array.Empty<object>(),
                 name = status?.Name,
                 status = status == null ? "offline" : "online",
@@ -681,6 +705,45 @@ public sealed partial class WorkerHost
         {
             throw new WorkerRpcException(new WorkerError("SERVER_INFO_UNAVAILABLE", "Server description could not be loaded"));
         }
+    }
+
+    private async Task<ServerInfo?> GetServerDescriptionAsync(Uri address, string hubAddress, CancellationToken cancel)
+    {
+        // A hub may not know this server or index a different trailing-slash
+        // spelling. Its /info proxy is a fallback, not a prerequisite for status.
+        try
+        {
+            using var directTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            directTimeout.CancelAfter(ConfigConstants.ServerStatusTimeout);
+            var info = await _http.GetFromJsonAsync<ServerInfo>(UriHelper.GetServerInfoAddress(address), directTimeout.Token);
+            if (info != null) return info;
+        }
+        catch (Exception error) when (error is HttpRequestException or IOException or JsonException or OperationCanceledException)
+        {
+            Log.Debug("Direct server description unavailable ({ErrorType})", error.GetType().Name);
+        }
+
+        var lookup = address.AbsoluteUri;
+        var alternate = lookup.EndsWith('/') ? lookup.TrimEnd('/') : lookup + "/";
+        foreach (var candidate in new[] { lookup, alternate })
+        {
+            try
+            {
+                return await _hub.GetServerInfo(candidate, hubAddress, cancel);
+            }
+            catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // Hubs use the registered string as their key. Try the other
+                // trailing-slash spelling only when that key was not found.
+                Log.Debug("Server description not indexed by hub under this address spelling");
+            }
+            catch (Exception error) when (error is HttpRequestException or IOException or JsonException or OperationCanceledException)
+            {
+                Log.Debug("Hub server description unavailable ({ErrorType})", error.GetType().Name);
+                return null;
+            }
+        }
+        return null;
     }
 
     private object GetFavorites()
@@ -1599,7 +1662,8 @@ public sealed partial class WorkerHost
         var reason = OptionalString(parameters, "reason");
         var requestedName = OptionalString(parameters, "name");
         var snapshot = GetServerSnapshot(address);
-        var serverName = string.IsNullOrWhiteSpace(requestedName) ? snapshot?.Name : requestedName;
+        // A fresh status also replaces names damaged by older stdio encodings.
+        var serverName = string.IsNullOrWhiteSpace(snapshot?.Name) ? requestedName : snapshot.Name;
         if (_connectionTask is { IsCompleted: false })
             throw new WorkerRpcException(new WorkerError("CONNECTION_BUSY", "A connection is already in progress"));
 

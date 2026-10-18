@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace SS14.Launcher.Api;
@@ -15,7 +16,11 @@ public static class ServerApi
         int SoftMaxPlayerCount,
         [property: JsonPropertyName("round_start_time")] string? RoundStartTime,
         [property: JsonPropertyName("run_level")] GameRunLevel? RunLevel,
-        [property: JsonPropertyName("tags")] string[]? Tags);
+        [property: JsonPropertyName("tags")] string[]? Tags,
+        // Content extensions are not guaranteed by the engine. Keep unexpected
+        // shapes from invalidating an otherwise usable server (or whole hub).
+        [property: JsonPropertyName("map")] JsonElement Map = default,
+        [property: JsonPropertyName("preset")] JsonElement Preset = default);
 
     public enum GameRunLevel
     {

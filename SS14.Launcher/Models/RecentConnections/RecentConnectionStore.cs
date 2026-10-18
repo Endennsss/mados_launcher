@@ -90,6 +90,23 @@ LIMIT @Limit;",
         }
     }
 
+    /// <summary>Refresh display metadata without inventing a new connection or changing historical statistics.</summary>
+    public bool RefreshName(Guid accountId, string address, string? name)
+    {
+        EnsureAccount(accountId);
+        var normalizedAddress = NormalizeAddress(address);
+        var normalizedName = NormalizeName(name);
+        if (normalizedName == null) return false;
+        lock (_gate)
+        {
+            using var connection = OpenConnection();
+            return connection.Execute(@"
+UPDATE RecentConnection SET Name = @Name
+WHERE AccountId = @AccountId AND Address = @Address AND Name IS NOT @Name;",
+                new { AccountId = accountId.ToString(), Address = normalizedAddress, Name = normalizedName }) > 0;
+        }
+    }
+
     private void Initialize()
     {
         lock (_gate)
