@@ -48,3 +48,5 @@ npm run dist
 - `MADOS_WORKER_PATH` — путь к worker executable или DLL.
 - `MADOS_WORKER_RID` — RID для подготовки self-contained worker, например `win-arm64`.
 - `MADOS_WORKER_CONFIGURATION` — конфигурация publish, обычно `Debug` или `Release`.
+
+## Сразу уведомляю, иишка тут юзалась - бодро, код можете сами глянуть никакой хуйни вшить не пытался
