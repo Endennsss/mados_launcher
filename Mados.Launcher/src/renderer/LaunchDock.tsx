@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Activity, AlertCircle, ArrowRight, Check, ChevronUp, Clock3, Download, Gamepad2, LoaderCircle, Map, RefreshCw, Rocket, ShieldCheck, Users, X } from "lucide-react";
-import { formatSessionTime, launchFailed, launchLabel, launchPercent, type LaunchActivity } from "./launch-status";
+import { formatSessionTime, launchAmount, launchFailed, launchLabel, launchPercent, type LaunchActivity } from "./launch-status";
 
 import { playServerHandoff } from "./server-handoff";
 import { useCurrentGame } from "./current-game";
@@ -18,6 +18,7 @@ export function LaunchDock({ activity, onDismiss, onOpenServer, onDiagnose }: { 
   const cancelled = activity.status === "Cancelled";
   const policy = activity.status === "AwaitingPrivacyPolicyAcceptance" ? activity.privacyPolicy : null;
   const percent = launchPercent(activity.progress);
+  const amount = launchAmount(activity.progress);
   const stage = playing || activity.status === "StartingClient" || activity.status === "Ready" ? 2
     : /Download|Updating|Verifying|Committing|Loading|Culling/.test(activity.status) ? 1 : 0;
   const phase = failed ? "error" : cancelled ? "cancelled" : policy ? "policy" : playing ? "playing"
@@ -63,7 +64,7 @@ export function LaunchDock({ activity, onDismiss, onOpenServer, onDiagnose }: { 
   return <section ref={dockRef} className={`launch-dock ${playing ? "playing current-game-dock" : ""} ${failed ? "failed" : ""}`} aria-label="Состояние запуска" data-session-state={playing ? "playing" : phase}>
     <div className="launch-dock-row">
       <div key={phase} className="launch-dock-icon" data-phase={phase} aria-hidden="true">{failed ? <AlertCircle size={21} /> : playing ? <Gamepad2 size={22} /> : policy || phase === "verify" ? <ShieldCheck size={21} /> : cancelled ? <X size={19} /> : phase === "download" ? <Download size={21} /> : phase === "starting" ? <Rocket size={21} /> : <LoaderCircle size={21} className="spin" />}</div>
-      <div className="launch-dock-copy"><strong data-tooltip={title}>{title}</strong><span aria-live="polite"><span key={activity.status} className="launch-stage-label">{playing && activity.contentBundle ? "Игра запущена" : launchLabel(activity.status)}</span>{playing && activity.startedAt != null && <> <span className="dock-separator">·</span> {formatSessionTime((now - activity.startedAt) / 1000)}</>}{!playing && percent != null && <> <span className="dock-separator">·</span> {percent}%</>}</span></div>
+      <div className="launch-dock-copy"><strong data-tooltip={title}>{title}</strong><span aria-live="polite"><span key={activity.status} className="launch-stage-label">{playing && activity.contentBundle ? "Игра запущена" : launchLabel(activity.status)}</span>{playing && activity.startedAt != null && <> <span className="dock-separator">·</span> {formatSessionTime((now - activity.startedAt) / 1000)}</>}{!playing && amount && <> <span className="dock-separator">·</span> <span className="launch-download-amount">{amount}</span></>}{!playing && percent != null && <> <span className="dock-separator">·</span> {percent}%</>}</span></div>
       {playing && !activity.contentBundle && <div className="current-game-inline"><span title={map}><Map size={13}/>{map}</span><span><Users size={13}/>{players}</span></div>}
       <div className="launch-dock-actions">
         {failed&&!activity.contentBundle&&activity.address&&onDiagnose&&<button className="secondary-button compact-button" data-action="diagnose-connection" onClick={onDiagnose}><Activity size={15}/>Диагностика</button>}
@@ -72,7 +73,7 @@ export function LaunchDock({ activity, onDismiss, onOpenServer, onDiagnose }: { 
         {(failed || cancelled) && <button className="icon-button" aria-label="Закрыть состояние запуска" onClick={onDismiss}><X size={17} /></button>}
       </div>
     </div>
-    {!playing && !failed && !cancelled && !policy && <div className={`launch-dock-progress ${percent == null ? "indeterminate" : ""}`} role="progressbar" aria-label="Загрузка игровых файлов" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}><span style={percent == null ? undefined : { width: `${percent}%` }} /></div>}
+    {!playing && !failed && !cancelled && !policy && <div className={`launch-dock-progress ${percent == null ? "indeterminate" : ""}`} role="progressbar" aria-label="Загрузка игровых файлов" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined} aria-valuetext={amount ? `${amount}${percent != null ? `, ${percent}%` : ""}` : undefined}><span style={percent == null ? undefined : { width: `${percent}%` }} /></div>}
     {(expanded || policy || failed || actionError) && <div className="launch-dock-details">
       {policy ? <div className="launch-policy"><p>Перед подключением ознакомьтесь с <button className="text-link inline-link" onClick={() => void window.mados.openExternal(policy.link).catch(error => setActionError((error as Error).message))}>политикой сервера</button>.</p><div><button className="secondary-button compact-button" disabled={acting} onClick={() => void action("connection.confirmPrivacyPolicy", { accepted: false })}>Отклонить</button><button data-action="accept-policy" className="primary-button compact-button" disabled={acting} onClick={() => void action("connection.confirmPrivacyPolicy", { accepted: true })}>Принять и продолжить</button></div></div>
         : failed ? <p className="launch-dock-error" role="alert">{activity.reason || "Попробуйте подключиться ещё раз."}</p>

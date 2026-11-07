@@ -86,9 +86,9 @@ function Appearance() {
   return <ThemePicker {...controller} />;
 }
 
-it("shows five interface previews and supports persistent selection, undo and returning to Mados", async () => {
+it("shows six interface previews and supports persistent selection, undo and returning to Mados", async () => {
   await act(async () => root.render(<Appearance />));
-  expect(host.querySelectorAll('.theme-preview')).toHaveLength(5);
+  expect(host.querySelectorAll('.theme-preview')).toHaveLength(6);
   await click('[role="radio"][data-theme-choice="ocean"]');
   expect(document.documentElement.dataset.theme).toBe("ocean"); expect(localStorage.getItem("mados.theme")).toBe("ocean");
   await click('[data-action="undo-theme"]'); expect(document.documentElement.dataset.theme).toBe("mados");
@@ -122,4 +122,14 @@ it("does not overwrite a newer account with a delayed state response", async () 
   await act(async () => resolve({ ...state, activeAccount: b }));
   expect(changed).not.toHaveBeenCalled();
   expect(document.querySelector('.account-panel-identity')?.textContent).toContain('Other Pilot');
+});
+
+it("persists and restores the gray theme", async () => {
+  await act(async () => root.render(<Appearance />));
+  await click('[data-theme-choice="gray"]');
+  expect(document.documentElement.dataset.theme).toBe("gray");
+  expect(localStorage.getItem("mados.theme")).toBe("gray");
+  await act(async () => root.unmount()); root = createRoot(host);
+  await act(async () => root.render(<Appearance />));
+  expect(host.querySelector('[data-theme-choice="gray"]')?.getAttribute("aria-checked")).toBe("true");
 });

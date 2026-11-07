@@ -6,3 +6,8 @@ it('round trips only explicit portable fields and refuses credentials/unknown fi
 it('previews added and updated entries by address without deleting anything',()=>{expect(previewPersonal(data,{...data,favorites:[{address:'ss14://station',name:'Renamed'},{address:'ss14://other',name:'Other'}]}).favorites).toEqual({total:2,added:1,updated:1});});
 it('matches equivalent trailing-slash/default-port addresses in preview',()=>{expect(previewPersonal({...data,favorites:[{address:'ss14://station:1212/',name:'Station'}]},data).favorites).toEqual({total:1,added:0,updated:0});});
 it('matches hostname case in restore preview while preserving path case',()=>{expect(previewPersonal({...data,favorites:[{address:'ss14://STATION:1212/',name:'Station'}]},data).favorites).toEqual({total:1,added:0,updated:0});expect(previewPersonal({...data,favorites:[{address:'ss14://station/Upper',name:'Station'}]},{...data,favorites:[{address:'ss14://station/lower',name:'Station'}]}).favorites.added).toBe(1);});
+
+it('preserves the gray theme in portable backups',()=>{
+ const value={format:'mados-personal',version:1,createdAt:new Date().toISOString(),data,appearance:{...appearance,theme:'gray'}};
+ expect(personalArchiveSchema.parse(JSON.parse(JSON.stringify(value))).appearance.theme).toBe('gray');
+});

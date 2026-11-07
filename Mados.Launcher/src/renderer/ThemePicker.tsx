@@ -7,6 +7,7 @@ export const themeOptions = [
   { id: "ocean", label: "Океан", description: "Холодный синий" },
   { id: "emerald", label: "Изумрудная", description: "Спокойный зелёный" },
   { id: "amber", label: "Янтарная", description: "Тёплый золотой" },
+  { id: "gray", label: "Серая", description: "Нейтральный графит" },
 ] as const;
 export type ThemeId = typeof themeOptions[number]["id"];
 type ThemeSelection = { theme: ThemeId; previous: ThemeId | null };

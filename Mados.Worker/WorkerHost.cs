@@ -1878,7 +1878,9 @@ public sealed partial class WorkerHost
     {
         if (e.PropertyName is nameof(Updater.Progress) or nameof(Updater.Status) or nameof(Updater.Speed))
         {
-            SendEvent("update.progress", new { status = _updater.Status.ToString(), progress = _updater.Progress, speed = _updater.Speed });
+            SendEvent("update.progress", new { status = _updater.Status.ToString(), progress = _updater.Progress is { } value
+                ? new { downloaded = value.downloaded, total = value.total, unit = value.unit.ToString() }
+                : null, speed = _updater.Speed });
             if (_updater.Status is Updater.UpdateStatus.Ready or Updater.UpdateStatus.Error)
                 SendEvent("update.completed", new { status = _updater.Status.ToString(), error = _updater.UpdateException?.Message });
             if (_updater.Status == Updater.UpdateStatus.Ready && _lastNotificationUpdateStatus != Updater.UpdateStatus.Ready)

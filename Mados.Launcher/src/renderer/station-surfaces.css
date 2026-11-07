@@ -110,7 +110,7 @@
 .dock-expand svg.expanded { transform: rotate(180deg); }
 .launch-dock .dock-expand:hover > svg { transform: translateY(-2px); }
 .launch-dock .dock-expand:hover > svg.expanded { transform: rotate(180deg) translateY(-2px); }
-.launch-dock-progress { height: 2px; background: rgba(var(--accent-rgb), .07); overflow: hidden; }
+.launch-dock-progress { height: 6px; background: rgba(var(--accent-rgb), .07); overflow: hidden; }
 .launch-dock-progress > span { display: block; height: 100%; background: var(--accent); transition: width 240ms ease; box-shadow: 0 0 8px rgba(var(--accent-rgb), .35); }
 .launch-dock-progress.indeterminate > span { width: 25%; animation: connection-progress 1.6s ease-in-out infinite; }
 .launch-dock-details { padding: 16px 18px; border-top: 1px solid rgba(var(--accent-rgb), .16); }
@@ -214,3 +214,5 @@
   :is(.last-server-card, .server-inspector, .launch-dock) :is(button, svg, svg *, .station-orbit) { transform: none !important; }
   .launch-dock-progress.indeterminate > span { opacity: .45; width: 100%; }
 }
+
+.launch-download-amount { font-variant-numeric: tabular-nums; white-space: nowrap; }

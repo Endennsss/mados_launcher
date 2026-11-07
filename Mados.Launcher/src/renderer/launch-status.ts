@@ -43,6 +43,23 @@ export function launchPercent(progress: ConnectionProgress["progress"]): number 
   return Math.max(0, Math.min(100, Math.round(downloaded / total * 100)));
 }
 
+// The updater reports bytes for archives/engine and file counts for manifests.
+export function launchAmount(progress: ConnectionProgress["progress"]): string | null {
+  if (!progress || typeof progress !== "object") return null;
+  const { downloaded, total, unit } = progress;
+  if (downloaded == null || !Number.isFinite(downloaded) || downloaded < 0) return null;
+  const hasTotal = total != null && Number.isFinite(total) && total > 0;
+  const amount = hasTotal ? Math.min(downloaded, total) : downloaded;
+  const number = (value: number) => value.toLocaleString("ru-RU", { maximumFractionDigits: 1 });
+  if (unit === "None") return hasTotal ? `${number(amount)} / ${number(total)} файлов` : `${number(amount)} файлов`;
+  if (unit !== "Bytes") return null;
+  const bytes = (value: number) => {
+    const index = Math.min(3, Math.floor(Math.log(Math.max(1, value)) / Math.log(1024)));
+    return `${number(value / 1024 ** index)} ${["Б", "КБ", "МБ", "ГБ"][index]}`;
+  };
+  return hasTotal ? `${bytes(amount)} / ${bytes(total)}` : bytes(amount);
+}
+
 export function launchLabel(status: string): string {
   const labels: Record<string, string> = {
     Connecting: "Проверяем подключение", Updating: "Подготавливаем игровые файлы",

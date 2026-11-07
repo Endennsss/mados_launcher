@@ -4,7 +4,7 @@ const entry=z.object({address,name:z.string().trim().min(1).max(120)}).strict();
 export const personalDataSchema=z.object({favorites:z.array(entry).max(2000),profiles:z.array(entry).max(500),notes:z.array(z.object({address,text:z.string().max(4000)}).strict()).max(2000)}).strict();
 const block=z.enum(['lastServer','favorites','week','recent','quickActions','profiles']);
 export const appearanceSchema=z.object({
- theme:z.enum(['mados','ocean','violet','emerald','amber']),reducedMotion:z.boolean(),sidebarCollapsed:z.boolean(),
+ theme:z.enum(['mados','ocean','violet','emerald','amber','gray']),reducedMotion:z.boolean(),sidebarCollapsed:z.boolean(),
  home:z.object({version:z.literal(1),order:z.array(block).max(6),hidden:z.array(block).max(6),pinned:z.array(address).max(4)}).strict(),
  favoriteLayout:z.object({version:z.literal(1),groups:z.array(z.object({id:z.string().regex(/^[a-zA-Z0-9-]{1,64}$/),name:z.string().min(1).max(32)}).strict()).max(12),entries:z.array(z.object({address,groupId:z.string().max(64)}).strict()).max(2000)}).strict(),
 }).strict();

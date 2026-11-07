@@ -4176,6 +4176,40 @@ kbd {
   --login-panel-bg: rgba(37, 28, 14, .94);
 }
 
+:is(:root, .theme-preview)[data-theme="gray"] {
+  --bg: #0c0c0e;
+  --surface: #18181b;
+  --text-muted: #a1a1aa;
+  --accent-rgb: 148, 148, 158;
+  --accent: #94949e;
+  --accent-hover: #d4d4d8;
+  --accent-pressed: #71717a;
+  --border: rgba(148, 148, 158, .25);
+  --surface-elevated: #242427;
+  --surface-hover: #303034;
+  --sidebar-start: rgba(37, 37, 41, .94);
+  --sidebar-end: rgba(16, 16, 19, .98);
+  --brand-start: #d4d4d8;
+  --brand-end: #71717a;
+  --hero-start: rgba(55, 55, 60, .88);
+  --hero-mid: rgba(29, 29, 33, .94);
+  --hero-end: rgba(18, 18, 21, .98);
+  --card-start: rgba(38, 38, 42, .8);
+  --card-end: rgba(24, 24, 28, .92);
+  --card-hover-start: rgba(50, 50, 55, .9);
+  --card-hover-end: rgba(29, 29, 33, .96);
+  --popover-bg: #202024;
+  --toggle-bg: #35353b;
+  --toggle-off: #48484f;
+  --scroll-thumb: #52525b;
+  --titlebar-bg: rgba(18, 18, 21, .96);
+  --titlebar-border: rgba(148, 148, 158, .12);
+  --modal-start: rgba(38, 38, 42, .98);
+  --modal-end: rgba(18, 18, 21, .99);
+  --overlay-surface: rgba(38, 38, 42, .96);
+  --login-panel-bg: rgba(27, 27, 31, .94);
+}
+
 .theme-picker {
   display: flex;
   flex-wrap: wrap;
@@ -4612,4 +4646,8 @@ kbd {
   .recent-connection-grid {
     grid-template-columns: 1fr;
   }
+}
+
+:root[data-theme="gray"] .brand-avatar img {
+  filter: grayscale(1);
 }
